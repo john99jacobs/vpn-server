@@ -1,0 +1,7 @@
+# Terraform configs, secrets
+*.tfvars
+
+#Terraform runtime
+.terraform/
+.terraform.lock.hcl
+*.tfstate*
