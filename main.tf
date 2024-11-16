@@ -115,7 +115,7 @@ resource "aws_spot_instance_request" "jump_box" {
   instance_type = var.jump_box_instance_type
   subnet_id     = aws_subnet.public_subnet.id
   key_name      = aws_key_pair.vpn_key.key_name
-  security_groups = [aws_security_group.jump_sg.name]
+  vpc_security_group_ids = [aws_security_group.jump_sg.id]
 
   spot_price = var.jump_box_spot_price  # Spot price per hour
   instance_interruption_behavior = "terminate"
@@ -135,7 +135,7 @@ resource "aws_instance" "vpn_server" {
   instance_type = var.vpn_server_instance_type
   subnet_id     = aws_subnet.private_subnet.id
   key_name      = aws_key_pair.vpn_key.key_name
-  security_groups = [aws_security_group.vpn_sg.name]
+  vpc_security_group_ids = [aws_security_group.vpn_sg.id]
 
   # Bootstrap script to install and configure OpenVPN
   user_data = <<-EOF

@@ -20,7 +20,7 @@ variable "key_pair_name" {
 variable "amazon_linux_ami" {
   description = "AMI ID for Amazon Linux 2"
   type        = string
-  default     = "ami-03cf127a"
+  default     = "ami-088d38b423bff245f"
 }
 
 variable "vpc_cidr" {
