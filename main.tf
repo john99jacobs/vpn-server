@@ -203,6 +203,10 @@ resource "aws_instance" "vpn_server" {
 }
 
 # Outputs
+output "jump_box_spot_instance_status" {
+  value = aws_spot_instance_request.jump_box.instance_state
+}
+
 output "jump_box_public_ip" {
   value = aws_spot_instance_request.jump_box.public_ip
 }
