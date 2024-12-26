@@ -23,6 +23,12 @@ variable "amazon_linux_ami" {
   default     = "ami-088d38b423bff245f"
 }
 
+variable "ubuntu_ami" {
+  description = "AMI for Ubuntu"
+  type        = string
+  default     = "ami-036841078a4b68e14"
+}
+
 variable "vpc_cidr" {
   description = "CIDR block for the VPC"
   type        = string

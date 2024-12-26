@@ -138,7 +138,7 @@ resource "aws_spot_instance_request" "jump_box" {
 
 # VPN Server (Normal Instance)
 resource "aws_instance" "vpn_server" {
-  ami           = var.amazon_linux_ami
+  ami           = var.ubuntu_ami
   instance_type = var.vpn_server_instance_type
   subnet_id     = aws_subnet.private_subnet.id
   key_name      = aws_key_pair.vpn_key.key_name
