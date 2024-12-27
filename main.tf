@@ -4,7 +4,7 @@ provider "aws" {
 
 # Create the VPC
 resource "aws_vpc" "vpn_vpc" {
-  cidr_block = var.vpc_cidr
+  cidr_block           = var.vpc_cidr
   enable_dns_support   = true
   enable_dns_hostnames = true
   tags = {
@@ -77,10 +77,10 @@ resource "aws_route_table_association" "public_subnet_association" {
 # Route Table for Private Subnet
 resource "aws_route_table" "private_route_table" {
   vpc_id = aws_vpc.vpn_vpc.id
-   route {
-    cidr_block = "0.0.0.0/0"
+  route {
+    cidr_block     = "0.0.0.0/0"
     nat_gateway_id = aws_nat_gateway.nat_gateway.id
-  } 
+  }
   tags = {
     Name = "private-route-table"
   }
@@ -127,9 +127,9 @@ resource "aws_security_group" "vpn_sg" {
   }
 
   ingress {
-    from_port = 22
-    to_port   = 22
-    protocol  = "tcp"
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
     security_groups = [aws_security_group.jump_sg.id]
   }
 
@@ -153,13 +153,13 @@ resource "aws_key_pair" "vpn_key" {
 
 # Spot Instance for Jump Box
 resource "aws_spot_instance_request" "jump_box" {
-  ami           = var.amazon_linux_ami
-  instance_type = var.jump_box_instance_type
-  subnet_id     = aws_subnet.public_subnet.id
-  key_name      = aws_key_pair.vpn_key.key_name
+  ami                    = var.amazon_linux_ami
+  instance_type          = var.jump_box_instance_type
+  subnet_id              = aws_subnet.public_subnet.id
+  key_name               = aws_key_pair.vpn_key.key_name
   vpc_security_group_ids = [aws_security_group.jump_sg.id]
 
-  spot_price = var.jump_box_spot_price  # Spot price per hour
+  spot_price                     = var.jump_box_spot_price # Spot price per hour
   instance_interruption_behavior = "terminate"
 
   tags = {
@@ -167,16 +167,16 @@ resource "aws_spot_instance_request" "jump_box" {
   }
 
   lifecycle {
-    create_before_destroy = true  # Ensure replacement on termination
+    create_before_destroy = true # Ensure replacement on termination
   }
 }
 
 # VPN Server (Normal Instance)
 resource "aws_instance" "vpn_server" {
-  ami           = var.ubuntu_ami
-  instance_type = var.vpn_server_instance_type
-  subnet_id     = aws_subnet.private_subnet.id
-  key_name      = aws_key_pair.vpn_key.key_name
+  ami                    = var.ubuntu_ami
+  instance_type          = var.vpn_server_instance_type
+  subnet_id              = aws_subnet.private_subnet.id
+  key_name               = aws_key_pair.vpn_key.key_name
   vpc_security_group_ids = [aws_security_group.vpn_sg.id]
 
   # Bootstrap script to install and configure OpenVPN
