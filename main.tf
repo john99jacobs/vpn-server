@@ -39,6 +39,23 @@ resource "aws_internet_gateway" "vpn_igw" {
   }
 }
 
+# Allocate an Elastic IP for the NAT Gateway
+resource "aws_eip" "nat_eip" {
+  domain = "vpc"
+  tags = {
+    Name = "nat-eip"
+  }
+}
+
+# Create a NAT Gateway in the Public Subnet
+resource "aws_nat_gateway" "nat_gateway" {
+  allocation_id = aws_eip.nat_eip.id
+  subnet_id     = aws_subnet.public_subnet.id
+  tags = {
+    Name = "nat-gateway"
+  }
+}
+
 # Route Table for Public Subnet
 resource "aws_route_table" "public_route_table" {
   vpc_id = aws_vpc.vpn_vpc.id
@@ -55,6 +72,24 @@ resource "aws_route_table" "public_route_table" {
 resource "aws_route_table_association" "public_subnet_association" {
   subnet_id      = aws_subnet.public_subnet.id
   route_table_id = aws_route_table.public_route_table.id
+}
+
+# Route Table for Private Subnet
+resource "aws_route_table" "private_route_table" {
+  vpc_id = aws_vpc.vpn_vpc.id
+   route {
+    cidr_block = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat_gateway.id
+  } 
+  tags = {
+    Name = "private-route-table"
+  }
+}
+
+# Associate Route Table with Private Subnet
+resource "aws_route_table_association" "private_subnet_association" {
+  subnet_id      = aws_subnet.private_subnet.id
+  route_table_id = aws_route_table.private_route_table.id
 }
 
 # Security Group for Jump Box
