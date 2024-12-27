@@ -178,6 +178,7 @@ resource "aws_instance" "vpn_server" {
   subnet_id              = aws_subnet.private_subnet.id
   key_name               = aws_key_pair.vpn_key.key_name
   vpc_security_group_ids = [aws_security_group.vpn_sg.id]
+  depends_on             = [aws_nat_gateway.nat_gateway]
 
   # Bootstrap script to install and configure OpenVPN
   user_data = <<-EOF
