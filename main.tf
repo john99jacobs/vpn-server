@@ -120,10 +120,10 @@ resource "aws_security_group" "vpn_sg" {
   vpc_id = aws_vpc.vpn_vpc.id
 
   ingress {
-    from_port   = 1194
-    to_port     = 1194
-    protocol    = "udp"
-    cidr_blocks = [var.allowed_vpn_cidr]
+    from_port       = 1194
+    to_port         = 1194
+    protocol        = "udp"
+    security_groups = [aws_security_group.nlb_sg.id]
   }
 
   ingress {
@@ -142,6 +142,29 @@ resource "aws_security_group" "vpn_sg" {
 
   tags = {
     Name = "vpn-sg"
+  }
+}
+
+# Security Group for NLB
+resource "aws_security_group" "nlb_sg" {
+  vpc_id = aws_vpc.vpn_vpc.id
+
+  ingress {
+    from_port   = 1194
+    to_port     = 1194
+    protocol    = "udp"
+    cidr_blocks = [var.allowed_vpn_cidr]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "nlb-sg"
   }
 }
 
@@ -187,6 +210,13 @@ resource "aws_instance" "vpn_server" {
     apt install -y openvpn easy-rsa
 
     # Set up Easy-RSA and generate keys
+    export EASYRSA_BATCH=1
+    export EASYRSA_DN=org
+    export EASYRSA_REQ_COUNTRY=US
+    export EASYRSA_REQ_PROVINCE=CA
+    export EASYRSA_REQ_CITY=SanFrancisco
+    export EASYRSA_REQ_ORG=Default-Org
+    export EASYRSA_REQ_EMAIL=EASYRSA_EMAIL_PLACEHOLDER    
     make-cadir ~/openvpn-ca
     cd ~/openvpn-ca
     ./easyrsa init-pki
@@ -249,4 +279,58 @@ output "jump_box_public_ip" {
 
 output "vpn_server_private_ip" {
   value = aws_instance.vpn_server.private_ip
+}
+
+# Network Load Balancer for VPN Traffic
+resource "aws_lb" "vpn_nlb" {
+  name               = "vpn-nlb"
+  internal           = false
+  load_balancer_type = "network"
+  subnets            = [aws_subnet.public_subnet.id]
+  security_groups    = [aws_security_group.nlb_sg.id]
+
+  tags = {
+    Name = "vpn-nlb"
+  }
+}
+
+# Target Group for VPN Server
+resource "aws_lb_target_group" "vpn_target_group" {
+  name        = "vpn-target-group"
+  protocol    = "UDP"
+  port        = 1194
+  vpc_id      = aws_vpc.vpn_vpc.id
+  target_type = "instance"
+
+  health_check {
+    protocol = "TCP"
+    port     = "1194"
+  }
+
+  tags = {
+    Name = "vpn-target-group"
+  }
+}
+
+# Listener for Network Load Balancer
+resource "aws_lb_listener" "vpn_listener" {
+  load_balancer_arn = aws_lb.vpn_nlb.arn
+  port              = 1194
+  protocol          = "UDP"
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.vpn_target_group.arn
+  }
+}
+
+# Add VPN Server to the Target Group
+resource "aws_lb_target_group_attachment" "vpn_target_attachment" {
+  target_group_arn = aws_lb_target_group.vpn_target_group.arn
+  target_id        = aws_instance.vpn_server.id
+  port             = 1194
+}
+
+output "nlb_dns_name" {
+  value       = aws_lb.vpn_nlb.dns_name
+  description = "The DNS name of the Network Load Balancer for the VPN server."
 }
