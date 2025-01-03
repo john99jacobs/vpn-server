@@ -130,7 +130,7 @@ resource "aws_security_group" "vpn_sg" {
     from_port       = 22
     to_port         = 22
     protocol        = "tcp"
-    security_groups = [aws_security_group.jump_sg.id]
+    security_groups = [aws_security_group.jump_sg.id, aws_security_group.nlb_sg.id]
   }
 
   egress {
@@ -304,7 +304,7 @@ resource "aws_lb_target_group" "vpn_target_group" {
 
   health_check {
     protocol = "TCP"
-    port     = "1194"
+    port     = "22"
   }
 
   tags = {
