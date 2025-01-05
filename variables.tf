@@ -65,12 +65,6 @@ variable "jump_box_instance_type" {
   default     = "t2.micro"
 }
 
-variable "jump_box_spot_price" {
-  description = "maximum spot price for the jump box spot instance"
-  type        = string
-  default     = "0.0035"
-}
-
 variable "vpn_server_instance_type" {
   description = "EC2 instance type for the VPN server"
   type        = string

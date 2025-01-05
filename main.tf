@@ -175,22 +175,15 @@ resource "aws_key_pair" "vpn_key" {
 }
 
 # Spot Instance for Jump Box
-resource "aws_spot_instance_request" "jump_box" {
+resource "aws_instance" "jump_box" {
   ami                    = var.amazon_linux_ami
   instance_type          = var.jump_box_instance_type
   subnet_id              = aws_subnet.public_subnet.id
   key_name               = aws_key_pair.vpn_key.key_name
   vpc_security_group_ids = [aws_security_group.jump_sg.id]
 
-  spot_price                     = var.jump_box_spot_price # Spot price per hour
-  instance_interruption_behavior = "terminate"
-
   tags = {
     Name = "jump-box"
-  }
-
-  lifecycle {
-    create_before_destroy = true # Ensure replacement on termination
   }
 }
 
@@ -269,12 +262,8 @@ resource "aws_instance" "vpn_server" {
 }
 
 # Outputs
-output "jump_box_spot_instance_status" {
-  value = aws_spot_instance_request.jump_box.instance_state
-}
-
 output "jump_box_public_ip" {
-  value = aws_spot_instance_request.jump_box.public_ip
+  value = aws_instance.jump_box.public_ip
 }
 
 output "vpn_server_private_ip" {
