@@ -123,14 +123,14 @@ resource "aws_security_group" "vpn_sg" {
     from_port       = 1194
     to_port         = 1194
     protocol        = "udp"
-    security_groups = [aws_security_group.nlb_sg.id]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
     from_port       = 22
     to_port         = 22
     protocol        = "tcp"
-    security_groups = [aws_security_group.jump_sg.id, aws_security_group.nlb_sg.id]
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
@@ -191,7 +191,7 @@ resource "aws_instance" "jump_box" {
 resource "aws_instance" "vpn_server" {
   ami                    = var.ubuntu_ami
   instance_type          = var.vpn_server_instance_type
-  subnet_id              = aws_subnet.private_subnet.id
+  subnet_id              = aws_subnet.public_subnet.id
   key_name               = aws_key_pair.vpn_key.key_name
   vpc_security_group_ids = [aws_security_group.vpn_sg.id]
   depends_on             = [aws_nat_gateway.nat_gateway]
