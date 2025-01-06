@@ -127,6 +127,13 @@ resource "aws_security_group" "vpn_sg" {
   }
 
   ingress {
+    from_port       = 53
+    to_port         = 53
+    protocol        = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
     from_port       = 22
     to_port         = 22
     protocol        = "tcp"
@@ -152,6 +159,13 @@ resource "aws_security_group" "nlb_sg" {
   ingress {
     from_port   = 1194
     to_port     = 1194
+    protocol    = "udp"
+    cidr_blocks = [var.allowed_vpn_cidr]
+  }
+
+  ingress {
+    from_port   = 53
+    to_port     = 53
     protocol    = "udp"
     cidr_blocks = [var.allowed_vpn_cidr]
   }
@@ -266,8 +280,8 @@ output "jump_box_public_ip" {
   value = aws_instance.jump_box.public_ip
 }
 
-output "vpn_server_private_ip" {
-  value = aws_instance.vpn_server.private_ip
+output "vpn_server_public_ip" {
+  value = aws_instance.vpn_server.public_ip
 }
 
 # Network Load Balancer for VPN Traffic
@@ -312,11 +326,47 @@ resource "aws_lb_listener" "vpn_listener" {
   }
 }
 
+# Target Group for VPN Server DNS
+resource "aws_lb_target_group" "vpn_dns_target_group" {
+  name        = "vpn-dns-target-group"
+  protocol    = "UDP"
+  port        = 53
+  vpc_id      = aws_vpc.vpn_vpc.id
+  target_type = "instance"
+
+  health_check {
+    protocol = "TCP"
+    port     = "22"
+  }
+
+  tags = {
+    Name = "vpn-dns-target-group"
+  }
+}
+
+# Listener for Network Load Balancer DNS
+resource "aws_lb_listener" "vpn_dns_listener" {
+  load_balancer_arn = aws_lb.vpn_nlb.arn
+  port              = 53
+  protocol          = "UDP"
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.vpn_dns_target_group.arn
+  }
+}
+
 # Add VPN Server to the Target Group
 resource "aws_lb_target_group_attachment" "vpn_target_attachment" {
   target_group_arn = aws_lb_target_group.vpn_target_group.arn
   target_id        = aws_instance.vpn_server.id
   port             = 1194
+}
+
+# Add VPN Server to the Target Group DNS
+resource "aws_lb_target_group_attachment" "vpn_dns_target_attachment" {
+  target_group_arn = aws_lb_target_group.vpn_dns_target_group.arn
+  target_id        = aws_instance.vpn_server.id
+  port             = 53
 }
 
 output "nlb_dns_name" {
