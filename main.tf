@@ -188,7 +188,7 @@ resource "aws_key_pair" "vpn_key" {
   public_key = file(var.ssh_public_key_path)
 }
 
-# Spot Instance for Jump Box
+# Jump Box Instance
 resource "aws_instance" "jump_box" {
   ami                    = var.amazon_linux_ami
   instance_type          = var.jump_box_instance_type
@@ -201,7 +201,7 @@ resource "aws_instance" "jump_box" {
   }
 }
 
-# VPN Server (Normal Instance)
+# VPN Server Instance
 resource "aws_instance" "vpn_server" {
   ami                    = var.ubuntu_ami
   instance_type          = var.vpn_server_instance_type
@@ -236,6 +236,10 @@ resource "aws_instance" "vpn_server" {
     # Copy keys to OpenVPN directory
     cp pki/ca.crt pki/issued/server.crt pki/private/server.key pki/dh.pem ta.key /etc/openvpn/
 
+    # Create client keys and certs
+    ./easyrsa build-client-full 'client1' nopass
+    ./easyrsa build-client-full 'client2' nopass
+
     # Create OpenVPN server config
     cat <<EOT > /etc/openvpn/server.conf
     port 1194
@@ -264,6 +268,18 @@ resource "aws_instance" "vpn_server" {
     # Enable IP forwarding
     echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
     sysctl -p
+
+    # Configure firewall and route tables
+    ufw route allow in on tun0 out on ens5
+    ufw allow 1194/udp
+    ufw allow 1194/tcp
+    ufw allow 22/tcp
+    ufw allow out on ens5 to any port 53
+    iptables -t nat -A POSTROUTING -o ens5 -j MASQUERADE
+    apt install iptables-persistent
+    netfilter-persistent save
+    netfilter-persistent reload
+    ufw enable
 
     # Restart and enable OpenVPN
     systemctl start openvpn@server
