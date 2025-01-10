@@ -22,37 +22,11 @@ resource "aws_subnet" "public_subnet" {
   }
 }
 
-# Create a Private Subnet for the VPN Server
-resource "aws_subnet" "private_subnet" {
-  vpc_id     = aws_vpc.vpn_vpc.id
-  cidr_block = var.private_subnet_cidr
-  tags = {
-    Name = "private-subnet"
-  }
-}
-
 # Attach Internet Gateway to the VPC
 resource "aws_internet_gateway" "vpn_igw" {
   vpc_id = aws_vpc.vpn_vpc.id
   tags = {
     Name = "vpn-igw"
-  }
-}
-
-# Allocate an Elastic IP for the NAT Gateway
-resource "aws_eip" "nat_eip" {
-  domain = "vpc"
-  tags = {
-    Name = "nat-eip"
-  }
-}
-
-# Create a NAT Gateway in the Public Subnet
-resource "aws_nat_gateway" "nat_gateway" {
-  allocation_id = aws_eip.nat_eip.id
-  subnet_id     = aws_subnet.public_subnet.id
-  tags = {
-    Name = "nat-gateway"
   }
 }
 
@@ -72,24 +46,6 @@ resource "aws_route_table" "public_route_table" {
 resource "aws_route_table_association" "public_subnet_association" {
   subnet_id      = aws_subnet.public_subnet.id
   route_table_id = aws_route_table.public_route_table.id
-}
-
-# Route Table for Private Subnet
-resource "aws_route_table" "private_route_table" {
-  vpc_id = aws_vpc.vpn_vpc.id
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.nat_gateway.id
-  }
-  tags = {
-    Name = "private-route-table"
-  }
-}
-
-# Associate Route Table with Private Subnet
-resource "aws_route_table_association" "private_subnet_association" {
-  subnet_id      = aws_subnet.private_subnet.id
-  route_table_id = aws_route_table.private_route_table.id
 }
 
 # Security Group for Jump Box
@@ -123,21 +79,21 @@ resource "aws_security_group" "vpn_sg" {
     from_port       = 1194
     to_port         = 1194
     protocol        = "udp"
-    cidr_blocks = ["0.0.0.0/0"]
+    security_groups = [aws_security_group.nlb_sg.id]
   }
 
   ingress {
     from_port       = 53
     to_port         = 53
     protocol        = "udp"
-    cidr_blocks = ["0.0.0.0/0"]
+    security_groups = [aws_security_group.nlb_sg.id]
   }
 
   ingress {
     from_port       = 22
     to_port         = 22
     protocol        = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    security_groups = [aws_security_group.jump_sg.id]
   }
 
   egress {
@@ -208,7 +164,6 @@ resource "aws_instance" "vpn_server" {
   subnet_id              = aws_subnet.public_subnet.id
   key_name               = aws_key_pair.vpn_key.key_name
   vpc_security_group_ids = [aws_security_group.vpn_sg.id]
-  depends_on             = [aws_nat_gateway.nat_gateway]
 
   # Bootstrap script to install and configure OpenVPN
   user_data = <<-EOF
@@ -298,6 +253,10 @@ output "jump_box_public_ip" {
 
 output "vpn_server_public_ip" {
   value = aws_instance.vpn_server.public_ip
+}
+
+output "vpn_server_private_ip" {
+  value = aws_instance.vpn_server.private_ip
 }
 
 # Network Load Balancer for VPN Traffic
