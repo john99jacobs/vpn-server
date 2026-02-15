@@ -5,3 +5,6 @@
 .terraform/
 .terraform.lock.hcl
 *.tfstate*
+
+# Generated client configs (contain private keys)
+clients/

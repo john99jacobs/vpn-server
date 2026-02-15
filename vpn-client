@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SSH_KEY="$HOME/.ssh/id_ed25519"
+SSH_USER="ubuntu"
+EASYRSA_DIR="/root/openvpn-ca"
+CLIENTS_DIR="$(cd "$(dirname "$0")" && pwd)/clients"
+
+get_server_ip() {
+  terraform output -raw vpn_server_public_ip 2>/dev/null || {
+    echo "Error: Could not get server IP. Have you run 'terraform apply'?" >&2
+    exit 1
+  }
+}
+
+ssh_cmd() {
+  local ip="$1"
+  shift
+  ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new "$SSH_USER@$ip" "$@"
+}
+
+cmd_create() {
+  local name="$1"
+  local ip
+  ip=$(get_server_ip)
+
+  echo "Creating client '$name' on $ip..."
+
+  # Single SSH session: generate cert, then dump all four files with delimiters
+  local output
+  output=$(ssh_cmd "$ip" "sudo bash -c '
+    cd ${EASYRSA_DIR}
+    EASYRSA_BATCH=1 ./easyrsa build-client-full \"${name}\" nopass >&2
+    echo \"@@CA@@\"
+    cat pki/ca.crt
+    echo \"@@CERT@@\"
+    cat pki/issued/${name}.crt
+    echo \"@@KEY@@\"
+    cat pki/private/${name}.key
+    echo \"@@TA@@\"
+    cat ta.key
+    echo \"@@END@@\"
+  '")
+
+  # Parse delimited output
+  local ca cert key ta
+  ca=$(echo "$output" | sed -n '/^@@CA@@$/,/^@@CERT@@$/{ /^@@/d; p; }')
+  cert=$(echo "$output" | sed -n '/^@@CERT@@$/,/^@@KEY@@$/{ /^@@/d; p; }')
+  key=$(echo "$output" | sed -n '/^@@KEY@@$/,/^@@TA@@$/{ /^@@/d; p; }')
+  ta=$(echo "$output" | sed -n '/^@@TA@@$/,/^@@END@@$/{ /^@@/d; p; }')
+
+  # Assemble .ovpn file
+  mkdir -p "$CLIENTS_DIR"
+  cat > "${CLIENTS_DIR}/${name}.ovpn" <<EOF
+client
+dev tun
+proto udp
+remote ${ip} 1194
+resolv-retry infinite
+nobind
+persist-key
+persist-tun
+remote-cert-tls server
+cipher AES-256-CBC
+auth SHA256
+key-direction 1
+verb 3
+redirect-gateway def1
+dhcp-option DNS 8.8.8.8
+
+<ca>
+${ca}
+</ca>
+
+<cert>
+${cert}
+</cert>
+
+<key>
+${key}
+</key>
+
+<tls-auth>
+${ta}
+</tls-auth>
+EOF
+
+  echo "Client config saved to ${CLIENTS_DIR}/${name}.ovpn"
+}
+
+cmd_revoke() {
+  local name="$1"
+  local ip
+  ip=$(get_server_ip)
+
+  echo "Revoking client '$name' on $ip..."
+
+  ssh_cmd "$ip" "sudo bash -c 'cd ${EASYRSA_DIR} && EASYRSA_BATCH=1 ./easyrsa revoke \"${name}\" && \
+    ./easyrsa gen-crl && \
+    cp pki/crl.pem /etc/openvpn/crl.pem && \
+    systemctl restart openvpn@server'"
+
+  # Remove local config if it exists
+  if [[ -f "${CLIENTS_DIR}/${name}.ovpn" ]]; then
+    rm "${CLIENTS_DIR}/${name}.ovpn"
+    echo "Removed local config ${CLIENTS_DIR}/${name}.ovpn"
+  fi
+
+  echo "Client '$name' revoked."
+}
+
+cmd_list() {
+  local ip
+  ip=$(get_server_ip)
+
+  echo "Issued client certificates:"
+  ssh_cmd "$ip" "sudo ls ${EASYRSA_DIR}/pki/issued/" | sed 's/\.crt$//' | grep -v '^server$' || true
+}
+
+usage() {
+  echo "Usage: vpn-client <command> [args]"
+  echo ""
+  echo "Commands:"
+  echo "  create <name>   Generate a client config (.ovpn)"
+  echo "  revoke <name>   Revoke a client certificate"
+  echo "  list            List issued client certificates"
+}
+
+# Main
+case "${1:-}" in
+  create)
+    [[ -z "${2:-}" ]] && { echo "Error: client name required" >&2; usage; exit 1; }
+    cmd_create "$2"
+    ;;
+  revoke)
+    [[ -z "${2:-}" ]] && { echo "Error: client name required" >&2; usage; exit 1; }
+    cmd_revoke "$2"
+    ;;
+  list)
+    cmd_list
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac

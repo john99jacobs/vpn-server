@@ -11,7 +11,9 @@ AWS-based OpenVPN server infrastructure defined in Terraform. Deploys a VPC with
 - `main.tf` — All infrastructure: VPC, subnet, security group, EC2 instance, and an inline `user_data` bootstrap script that installs/configures OpenVPN with Easy-RSA
 - `variables.tf` — Input variables with defaults (region, AMI, CIDRs, instance type)
 - `terraform.tfvars` — Local overrides (gitignored, contains sensitive values)
-- `client-template.ovpn` — Template OpenVPN client config; requires manual cert/key pasting
+- `vpn-client` — Bash CLI to create, revoke, and list VPN client configs
+- `client-template.ovpn` — Reference OpenVPN client config format
+- `clients/` — Generated `.ovpn` files (gitignored, contains private keys)
 
 ## Commands
 
@@ -22,6 +24,10 @@ terraform apply         # Deploy infrastructure
 terraform destroy       # Tear down all resources
 terraform fmt           # Format .tf files
 terraform validate      # Validate configuration syntax
+
+./vpn-client create <name>   # Generate client config (clients/<name>.ovpn)
+./vpn-client revoke <name>   # Revoke client cert and delete local config
+./vpn-client list            # List issued client certificates
 ```
 
 ## Architecture (current state)
@@ -42,7 +48,6 @@ Traffic flows directly: Client → VPN server (public IP). Security group allows
 - AMI IDs are hardcoded and region-specific — should use `data` sources for lookup
 - Terraform state is local only — no remote backend configured
 - `user_data` bootstrap script is inline (~70 lines) — consider extracting to a `.sh` file
-- Client config requires manual cert pasting — could auto-generate complete `.ovpn` files
 - SSH open to `0.0.0.0/0` by default — lock down or replace with SSM
 - Hardcoded email in `user_data` bootstrap script
 

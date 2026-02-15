@@ -118,9 +118,10 @@ resource "aws_instance" "vpn_server" {
     # Copy keys to OpenVPN directory
     cp pki/ca.crt pki/issued/server.crt pki/private/server.key pki/dh.pem ta.key /etc/openvpn/
 
-    # Create client keys and certs
-    ./easyrsa build-client-full 'client1' nopass
-    ./easyrsa build-client-full 'client2' nopass
+    # Generate initial CRL for revocation support
+    ./easyrsa gen-crl
+    cp pki/crl.pem /etc/openvpn/crl.pem
+    chmod 644 /etc/openvpn/crl.pem
 
     # Create OpenVPN server config
     cat <<EOT > /etc/openvpn/server.conf
@@ -144,6 +145,7 @@ resource "aws_instance" "vpn_server" {
     persist-tun
     user nobody
     group nogroup
+    crl-verify crl.pem
     verb 3
     EOT
 
