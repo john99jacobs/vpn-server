@@ -47,6 +47,11 @@ variable "allowed_vpn_cidr" {
   default     = "0.0.0.0/0"
 }
 
+variable "easyrsa_email" {
+  description = "Email for Easy-RSA certificate authority"
+  type        = string
+}
+
 variable "vpn_server_instance_type" {
   description = "EC2 instance type for the VPN server"
   type        = string

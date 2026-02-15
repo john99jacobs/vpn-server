@@ -105,7 +105,7 @@ resource "aws_instance" "vpn_server" {
     export EASYRSA_REQ_PROVINCE=CA
     export EASYRSA_REQ_CITY=SanFrancisco
     export EASYRSA_REQ_ORG=Default-Org
-    export EASYRSA_REQ_EMAIL=EASYRSA_EMAIL_PLACEHOLDER
+    export EASYRSA_REQ_EMAIL=${var.easyrsa_email}
     make-cadir ~/openvpn-ca
     cd ~/openvpn-ca
     ./easyrsa init-pki

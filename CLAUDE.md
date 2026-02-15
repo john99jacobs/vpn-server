@@ -49,7 +49,6 @@ Traffic flows directly: Client → VPN server (public IP). Security group allows
 - Terraform state is local only — no remote backend configured
 - `user_data` bootstrap script is inline (~70 lines) — consider extracting to a `.sh` file
 - SSH open to `0.0.0.0/0` by default — lock down or replace with SSM
-- Hardcoded email in `user_data` bootstrap script
 
 ## Terraform Conventions
 
