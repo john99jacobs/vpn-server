@@ -4,12 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AWS-based OpenVPN server infrastructure defined in Terraform. Deploys a VPC with an OpenVPN server, jump box, and NLB in `us-east-2`.
+AWS-based OpenVPN server infrastructure defined in Terraform. Deploys a VPC with a single OpenVPN server in `us-east-2`.
 
 ## Key Files
 
-- `main.tf` — All infrastructure: VPC, subnets, security groups, EC2 instances (jump box + VPN server), NLB, and an inline `user_data` bootstrap script that installs/configures OpenVPN with Easy-RSA
-- `variables.tf` — Input variables with defaults (region, AMIs, CIDRs, instance types)
+- `main.tf` — All infrastructure: VPC, subnet, security group, EC2 instance, and an inline `user_data` bootstrap script that installs/configures OpenVPN with Easy-RSA
+- `variables.tf` — Input variables with defaults (region, AMI, CIDRs, instance type)
 - `terraform.tfvars` — Local overrides (gitignored, contains sensitive values)
 - `client-template.ovpn` — Template OpenVPN client config; requires manual cert/key pasting
 
@@ -26,31 +26,29 @@ terraform validate      # Validate configuration syntax
 
 ## Architecture (current state)
 
-Single VPC (`10.0.0.0/16`) with one public subnet. Two EC2 instances:
-1. **Jump box** (Amazon Linux) — SSH bastion with its own security group
-2. **VPN server** (Ubuntu) — OpenVPN on UDP/1194, bootstrapped via inline `user_data` script
+Single VPC (`10.0.0.0/16`) with one public subnet. One EC2 instance:
+- **VPN server** (Ubuntu) — OpenVPN on UDP/1194, bootstrapped via inline `user_data` script
 
-An NLB fronts the VPN server with two target groups (UDP/1194 for VPN, UDP/53 for DNS). Traffic flows: Client → NLB → VPN server SG (allows from NLB SG) → VPN server.
+Traffic flows directly: Client → VPN server (public IP). Security group allows UDP/1194 (VPN) and TCP/22 (SSH) by CIDR. SSH is open to `0.0.0.0/0` by default — lock down via `allowed_ssh_cidr` in `terraform.tfvars`.
 
 ## Branches
 
-- `public-vpn-server` — VPN server in public subnet (current working branch)
+- `main` — Current working branch (simplified single-server setup)
+- `public-vpn-server` — Previous iteration with jump box and NLB
 - `private-vpn-server` — VPN server in private subnet with NAT gateway
-- `main` — Base branch
 
 ## Known Issues / Planned Improvements
 
-- NLB adds cost (~$16/mo) with no HA benefit for a single server — candidate for removal
-- Jump box is redundant when VPN server is in the same public subnet — replace with SSM
-- DNS target group (port 53) is unnecessary — VPN server doesn't run a DNS server
 - AMI IDs are hardcoded and region-specific — should use `data` sources for lookup
 - Terraform state is local only — no remote backend configured
 - `user_data` bootstrap script is inline (~70 lines) — consider extracting to a `.sh` file
 - Client config requires manual cert pasting — could auto-generate complete `.ovpn` files
+- SSH open to `0.0.0.0/0` by default — lock down or replace with SSM
+- Hardcoded email in `user_data` bootstrap script
 
 ## Terraform Conventions
 
 - No modules — everything is in a single `main.tf`
 - No remote state backend
 - Provider: `hashicorp/aws` only
-- Resources use descriptive names prefixed by function (e.g., `vpn_vpc`, `vpn_sg`, `jump_sg`)
+- Resources use descriptive names prefixed by function (e.g., `vpn_vpc`, `vpn_sg`)

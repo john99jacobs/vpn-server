@@ -17,12 +17,6 @@ variable "key_pair_name" {
   default     = "vpn-key"
 }
 
-variable "amazon_linux_ami" {
-  description = "AMI ID for Amazon Linux 2"
-  type        = string
-  default     = "ami-088d38b423bff245f"
-}
-
 variable "ubuntu_ami" {
   description = "AMI for Ubuntu"
   type        = string
@@ -41,12 +35,6 @@ variable "public_subnet_cidr" {
   default     = "10.0.1.0/24"
 }
 
-variable "private_subnet_cidr" {
-  description = "CIDR block for the private subnet"
-  type        = string
-  default     = "10.0.2.0/24"
-}
-
 variable "allowed_ssh_cidr" {
   description = "CIDR block for SSH access"
   type        = string
@@ -57,12 +45,6 @@ variable "allowed_vpn_cidr" {
   description = "CIDR block for VPN access"
   type        = string
   default     = "0.0.0.0/0"
-}
-
-variable "jump_box_instance_type" {
-  description = "EC2 instance type for the jump box"
-  type        = string
-  default     = "t2.micro"
 }
 
 variable "vpn_server_instance_type" {
