@@ -17,12 +17,6 @@ variable "key_pair_name" {
   default     = "vpn-key"
 }
 
-variable "ubuntu_ami" {
-  description = "AMI for Ubuntu"
-  type        = string
-  default     = "ami-036841078a4b68e14"
-}
-
 variable "vpc_cidr" {
   description = "CIDR block for the VPC"
   type        = string

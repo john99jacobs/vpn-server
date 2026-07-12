@@ -2,6 +2,22 @@ provider "aws" {
   region = var.aws_region
 }
 
+# Look up the latest Canonical Ubuntu 24.04 (Noble) AMI instead of hardcoding an ID
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
 # Create the VPC
 resource "aws_vpc" "vpn_vpc" {
   cidr_block           = var.vpc_cidr
@@ -86,7 +102,7 @@ resource "aws_key_pair" "vpn_key" {
 
 # VPN Server Instance
 resource "aws_instance" "vpn_server" {
-  ami                    = var.ubuntu_ami
+  ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.vpn_server_instance_type
   subnet_id              = aws_subnet.public_subnet.id
   key_name               = aws_key_pair.vpn_key.key_name
