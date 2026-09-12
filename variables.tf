@@ -46,6 +46,12 @@ variable "easyrsa_email" {
   type        = string
 }
 
+variable "vpn_server_ami" {
+  description = "AMI for the OpenVPN server. Pinned on purpose -- see the comment on aws_instance.vpn_server."
+  type        = string
+  default     = "ami-0933f4f9e0a0fc3a5" # Ubuntu 24.04 noble, us-east-2, in use since 2026-07-12
+}
+
 variable "vpn_server_instance_type" {
   description = "EC2 instance type for the VPN server"
   type        = string

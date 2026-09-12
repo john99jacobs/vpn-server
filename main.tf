@@ -102,7 +102,12 @@ resource "aws_key_pair" "vpn_key" {
 
 # VPN Server Instance
 resource "aws_instance" "vpn_server" {
-  ami                    = data.aws_ami.ubuntu.id
+  # Pinned, NOT data.aws_ami.ubuntu.id. This instance holds the OpenVPN CA and
+  # ta.key, so replacing it invalidates every issued client cert. Bump
+  # vpn_server_ami only when you intend a rebuild, and back up /root/openvpn-ca
+  # first. The WireGuard server tracks the AMI data source instead -- it is
+  # stateless, so it can be replaced freely.
+  ami                    = var.vpn_server_ami
   instance_type          = var.vpn_server_instance_type
   subnet_id              = aws_subnet.public_subnet.id
   key_name               = aws_key_pair.vpn_key.key_name
