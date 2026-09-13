@@ -21,7 +21,7 @@
 
 ## Later
 - [ ] Add S3 backend for Terraform state
-- [x] Encrypt the CA backup (age, to John's SSH key)
+- [x] Encrypt the CA backup
 - [ ] Store a CA backup copy off-laptop (passphrase-encrypted)
 - [ ] IPv6 for the WireGuard tunnel (currently leaks v6 around the VPN)
 - [ ] Remove hardcoded email from bootstrap script (use a variable)
