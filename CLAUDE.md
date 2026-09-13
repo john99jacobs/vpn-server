@@ -35,6 +35,7 @@ terraform validate      # Validate configuration syntax
 ./vpn-client list            # List issued client certificates
 
 ./wg-client add <name>       # WireGuard: keypair + config, register peer
+./wg-client add <name> --pubkey <KEY>   # register a device-generated key
 ./wg-client remove <name>    # Deregister a peer
 ./wg-client list             # Registered peers
 ./wg-client status           # Live handshakes

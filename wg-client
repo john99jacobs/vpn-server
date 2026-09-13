@@ -72,8 +72,18 @@ else:
 # --- commands ---------------------------------------------------------------
 
 cmd_add() {
-  local name="$1"
-  need wg wireguard-tools
+  local name="$1"; shift
+  local pubkey=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pubkey)
+        pubkey="${2:-}"
+        [[ -n "$pubkey" ]] || { echo "Error: --pubkey needs a value" >&2; exit 1; }
+        shift 2
+        ;;
+      *) echo "Error: unknown option '$1'" >&2; exit 1 ;;
+    esac
+  done
 
   local peers
   peers=$(peers_get)
@@ -82,9 +92,31 @@ cmd_add() {
     exit 1
   fi
 
-  local priv pub ip endpoint server_pub port
-  priv=$(wg genkey)
-  pub=$(printf '%s' "$priv" | wg pubkey)
+  local priv="" pub ip endpoint server_pub port
+  if [[ -n "$pubkey" ]]; then
+    # Device-generated key: the private key is created on the device and never
+    # exists here. Nothing is written to clients-wg/.
+    printf '%s' "$pubkey" | python3 -c '
+import base64, sys
+key = sys.stdin.read().strip()
+try:
+    raw = base64.b64decode(key, validate=True)
+except Exception:
+    sys.exit("not valid base64")
+if len(raw) != 32:
+    sys.exit(f"decodes to {len(raw)} bytes, expected 32")' \
+      || { echo "Error: --pubkey must be a WireGuard public key (44-char base64)" >&2; exit 1; }
+    if printf '%s' "$peers" | python3 -c 'import json,sys; sys.exit(0 if any(p["public_key"]==sys.argv[1] for p in json.load(sys.stdin)) else 1)' "$pubkey"; then
+      echo "Error: that public key is already registered." >&2
+      exit 1
+    fi
+    pub="$pubkey"
+  else
+    need wg wireguard-tools
+    priv=$(wg genkey)
+    pub=$(printf '%s' "$priv" | wg pubkey)
+  fi
+
   # Lowest unused address in the /24; .1 is the server.
   ip=$(printf '%s' "$peers" | python3 -c '
 import json, sys
@@ -98,6 +130,30 @@ else:
   endpoint=$(tf_output wg_server_public_ip)
   server_pub=$(tf_output wg_server_public_key)
   port=$(tf_output wg_port)
+
+  printf '%s' "$peers" | python3 -c '
+import json, sys
+peers = json.load(sys.stdin)
+peers.append({"name": sys.argv[1], "public_key": sys.argv[2], "ip": sys.argv[3]})
+print(json.dumps(peers))' "$name" "$pub" "$ip" | peers_put
+
+  if [[ -n "$pubkey" ]]; then
+    cat <<SETTINGS
+Registered '$name' at $ip. No private key was generated here.
+
+Enter these on the device (it already holds its own private key):
+
+  Address             $ip/32
+  DNS                 $CLIENT_DNS
+  Peer public key     $server_pub
+  Endpoint            $endpoint:$port
+  Allowed IPs         0.0.0.0/0
+  Persistent keepalive 25
+
+The server picks it up within ~2min.
+SETTINGS
+    return
+  fi
 
   mkdir -p "$CLIENTS_DIR" && chmod 700 "$CLIENTS_DIR"
   local conf="$CLIENTS_DIR/$name.conf"
@@ -116,14 +172,9 @@ AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25
 CONF
 
-  printf '%s' "$peers" | python3 -c '
-import json, sys
-peers = json.load(sys.stdin)
-peers.append({"name": sys.argv[1], "public_key": sys.argv[2], "ip": sys.argv[3]})
-print(json.dumps(peers))' "$name" "$pub" "$ip" | peers_put
-
   echo "Created $conf  (address $ip)"
   echo "Registered '$name'. The server picks it up within ~2min."
+  echo "This file holds the private key -- delete it once the device has imported it."
 }
 
 cmd_remove() {
@@ -200,6 +251,9 @@ usage() {
 Usage: wg-client <command> [args]
 
   add <name>      Generate a keypair + config, register the peer
+  add <name> --pubkey <KEY>
+                  Register a key the DEVICE generated; nothing secret is
+                  written here. Prints the settings to enter on the device.
   remove <name>   Deregister a peer and delete its local config
   list            List registered peers
   status          Show live handshakes from the server
@@ -212,7 +266,7 @@ USAGE
 }
 
 case "${1:-}" in
-  add)     [[ -n "${2:-}" ]] || { usage; exit 1; }; cmd_add "$2" ;;
+  add)     [[ -n "${2:-}" ]] || { usage; exit 1; }; cmd_add "${@:2}" ;;
   remove)  [[ -n "${2:-}" ]] || { usage; exit 1; }; cmd_remove "$2" ;;
   qr)      [[ -n "${2:-}" ]] || { usage; exit 1; }; cmd_qr "$2" ;;
   list)    cmd_list ;;

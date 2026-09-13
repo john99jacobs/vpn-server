@@ -90,6 +90,7 @@ Generated configs are saved to `clients/` (gitignored).
 
 ```bash
 ./wg-client add <name>      # generate a keypair + config, register the peer
+./wg-client add <name> --pubkey <KEY>   # register a key the DEVICE generated
 ./wg-client qr <name>       # QR code for the iOS/Android app
 ./wg-client list            # registered peers
 ./wg-client status          # live handshakes from the server
@@ -98,7 +99,14 @@ Generated configs are saved to `clients/` (gitignored).
 ```
 
 Client private keys are generated locally and never leave the machine. Configs
-land in `clients-wg/` (gitignored).
+land in `clients-wg/` (gitignored) — **delete each one once the device has
+imported it**, so the only copy of a client key is on the device that uses it.
+
+For devices you'd rather never hand a key to, create an empty tunnel in the
+WireGuard app, let it generate its own keypair, and register just the public half
+with `--pubkey`. Nothing secret is written here at all; the command prints the
+settings to enter on the device. You lose the QR shortcut, since a QR has to
+carry the private key to be useful.
 
 The peer list lives in SSM Parameter Store at `/vpn/wg/peers`, not in this repo.
 Peer public keys aren't secret — they can't be used to connect — but they are a
