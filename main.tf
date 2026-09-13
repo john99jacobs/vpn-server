@@ -75,11 +75,19 @@ resource "aws_security_group" "vpn_sg" {
     cidr_blocks = [var.allowed_vpn_cidr]
   }
 
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.allowed_ssh_cidr]
+  # Normally absent. Shell access is via Session Manager, which needs no inbound
+  # port and does not care what network you are on -- the point being that a
+  # fixed home CIDR is useless when travelling. Set emergency_ssh_cidr only to
+  # break glass if SSM itself is broken.
+  dynamic "ingress" {
+    for_each = var.emergency_ssh_cidr == null ? [] : [var.emergency_ssh_cidr]
+    content {
+      description = "Break-glass SSH"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = [ingress.value]
+    }
   }
 
   egress {
@@ -92,6 +100,39 @@ resource "aws_security_group" "vpn_sg" {
   tags = {
     Name = "vpn-sg"
   }
+}
+
+# ---------------------------------------------------------------------------
+# Session Manager access. Gives shell access with no inbound port and no
+# source-IP assumption, which is what makes closing SSH viable for someone who
+# travels: authentication is IAM, not network location, and every session is
+# recorded in CloudTrail.
+# ---------------------------------------------------------------------------
+
+data "aws_iam_policy_document" "vpn_server_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "vpn_server" {
+  name               = "vpn-server-ssm"
+  assume_role_policy = data.aws_iam_policy_document.vpn_server_assume.json
+  tags               = { Name = "vpn-server-ssm" }
+}
+
+resource "aws_iam_role_policy_attachment" "vpn_server_ssm_core" {
+  role       = aws_iam_role.vpn_server.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "vpn_server" {
+  name = "vpn-server-ssm"
+  role = aws_iam_role.vpn_server.name
 }
 
 # Key Pair for SSH access
@@ -112,6 +153,7 @@ resource "aws_instance" "vpn_server" {
   subnet_id              = aws_subnet.public_subnet.id
   key_name               = aws_key_pair.vpn_key.key_name
   vpc_security_group_ids = [aws_security_group.vpn_sg.id]
+  iam_instance_profile   = aws_iam_instance_profile.vpn_server.name
 
   # Bootstrap script to install and configure OpenVPN.
   # Note: bootstrap.sh is rendered by templatefile(), so any literal ${...} or
@@ -132,4 +174,13 @@ output "vpn_server_public_ip" {
 
 output "vpn_server_private_ip" {
   value = aws_instance.vpn_server.private_ip
+}
+
+output "vpn_server_instance_id" {
+  description = "Used by ./vpn-client to reach the server over Session Manager"
+  value       = aws_instance.vpn_server.id
+}
+
+output "aws_region" {
+  value = var.aws_region
 }

@@ -5,18 +5,31 @@ SSH_KEY="$HOME/.ssh/id_ed25519"
 SSH_USER="ubuntu"
 EASYRSA_DIR="/root/openvpn-ca"
 CLIENTS_DIR="$(cd "$(dirname "$0")" && pwd)/clients"
+REPO="$(cd "$(dirname "$0")" && pwd)"
 
-get_server_ip() {
-  terraform output -raw vpn_server_public_ip 2>/dev/null || {
-    echo "Error: Could not get server IP. Have you run 'terraform apply'?" >&2
+tf_output() {
+  terraform -chdir="$REPO" output -raw "$1" 2>/dev/null || {
+    echo "Error: could not read '$1'. Have you run 'terraform apply'?" >&2
     exit 1
   }
 }
 
+get_server_ip() { tf_output vpn_server_public_ip; }
+
+# Shell access runs over Session Manager rather than a public SSH port, so this
+# works from any network without the security group knowing our address. sshd
+# still does the authentication; SSM only carries the TCP stream.
+#
+# Needs session-manager-plugin locally:
+#   brew install --cask session-manager-plugin
 ssh_cmd() {
-  local ip="$1"
-  shift
-  ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new "$SSH_USER@$ip" "$@"
+  local id region
+  id=$(tf_output vpn_server_instance_id)
+  region=$(tf_output aws_region)
+  ssh -i "$SSH_KEY" \
+    -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p --region $region" \
+    -o StrictHostKeyChecking=accept-new \
+    "$SSH_USER@$id" "$@"
 }
 
 cmd_create() {
@@ -28,7 +41,7 @@ cmd_create() {
 
   # Single SSH session: generate cert, then dump all four files with delimiters
   local output
-  output=$(ssh_cmd "$ip" "sudo bash -c '
+  output=$(ssh_cmd "sudo bash -c '
     cd ${EASYRSA_DIR}
     EASYRSA_BATCH=1 ./easyrsa build-client-full \"${name}\" nopass >&2
     echo \"@@CA@@\"
@@ -90,12 +103,10 @@ EOF
 
 cmd_revoke() {
   local name="$1"
-  local ip
-  ip=$(get_server_ip)
 
-  echo "Revoking client '$name' on $ip..."
+  echo "Revoking client '$name'..."
 
-  ssh_cmd "$ip" "sudo bash -c 'cd ${EASYRSA_DIR} && EASYRSA_BATCH=1 ./easyrsa revoke \"${name}\" && \
+  ssh_cmd "sudo bash -c 'cd ${EASYRSA_DIR} && EASYRSA_BATCH=1 ./easyrsa revoke \"${name}\" && \
     ./easyrsa gen-crl && \
     cp pki/crl.pem /etc/openvpn/crl.pem && \
     systemctl restart openvpn@server'"
@@ -110,11 +121,8 @@ cmd_revoke() {
 }
 
 cmd_list() {
-  local ip
-  ip=$(get_server_ip)
-
   echo "Issued client certificates:"
-  ssh_cmd "$ip" "sudo ls ${EASYRSA_DIR}/pki/issued/" | sed 's/\.crt$//' | grep -v '^server$' || true
+  ssh_cmd "sudo ls ${EASYRSA_DIR}/pki/issued/" | sed 's/\.crt$//' | grep -v '^server$' || true
 }
 
 usage() {

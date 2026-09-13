@@ -29,10 +29,13 @@ variable "public_subnet_cidr" {
   default     = "10.0.1.0/24"
 }
 
-variable "allowed_ssh_cidr" {
-  description = "CIDR block for SSH access"
+# Deliberately null: there is no inbound SSH by default. Shell access is via
+# Session Manager (see ./vpn-client and ./wg-client). Set this to a specific CIDR
+# only as a break-glass measure, and unset it again afterwards.
+variable "emergency_ssh_cidr" {
+  description = "CIDR allowed inbound SSH. null means no SSH ingress at all."
   type        = string
-  default     = "0.0.0.0/0"
+  default     = null
 }
 
 variable "allowed_vpn_cidr" {

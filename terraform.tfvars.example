@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars and edit. terraform.tfvars is gitignored.
+
+easyrsa_email       = "you@example.com"  # required: CA contact on the OpenVPN server
+ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+key_pair_name       = "vpn-key"
+aws_region          = "us-east-2"
+
+# Restrict who can reach the VPN ports. Defaults to 0.0.0.0/0.
+#allowed_vpn_cidr = "203.0.113.0/24"
+
+# There is no inbound SSH by default -- shell access is via Session Manager.
+# Uncomment ONLY to break glass if SSM is broken, then comment it out again.
+#emergency_ssh_cidr = "203.0.113.25/32"

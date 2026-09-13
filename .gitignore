@@ -10,3 +10,5 @@
 
 # Generated client configs (contain private keys)
 clients/
+# WireGuard client configs (contain private keys)
+clients-wg/
