@@ -1,0 +1,5 @@
+# Written by ./init-state-bucket; copy to backend.hcl only if setting up by hand.
+# backend.hcl is gitignored. Use with: terraform init -backend-config=backend.hcl
+
+bucket = "vpn-server-tfstate-123456789012"
+region = "us-east-2"

@@ -14,6 +14,8 @@ AWS-based OpenVPN server infrastructure defined in Terraform. Deploys a VPC with
 - `vpn-client` — Bash CLI to create, revoke, and list VPN client configs
 - `client-template.ovpn` — Reference OpenVPN client config format
 - `clients/` — Generated `.ovpn` files (gitignored, contains private keys)
+- `init-state-bucket` — One-time: creates the S3 state bucket and writes `backend.hcl`
+- `backend.hcl` — Backend bucket/region (gitignored; see `backend.hcl.example`)
 
 ## Commands
 
@@ -45,13 +47,14 @@ Traffic flows directly: Client → VPN server (public IP). Security group allows
 
 ## Known Issues / Planned Improvements
 
-- Terraform state is local only — no remote backend configured
 - `user_data` bootstrap script is inline (~70 lines) — consider extracting to a `.sh` file
 - SSH open to `0.0.0.0/0` by default — lock down or replace with SSM
 
 ## Terraform Conventions
 
 - No modules — everything is in a single `main.tf`
-- No remote state backend
+- Remote state in S3 (partial backend config: `terraform init -backend-config=backend.hcl`;
+  `backend.hcl` is gitignored and written by `./init-state-bucket`). Never run
+  Terraform against a local `terraform.tfstate`.
 - Provider: `hashicorp/aws` only
 - Resources use descriptive names prefixed by function (e.g., `vpn_vpc`, `vpn_sg`)

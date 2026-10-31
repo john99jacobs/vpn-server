@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# One-time setup for remote Terraform state: creates the S3 bucket and writes
+# backend.hcl pointing at it.
+#
+# Safe to re-run. An existing bucket is reused and its settings are re-applied,
+# and an existing backend.hcl is left alone, so a second machine sets itself up
+# by running this with its own credentials.
+#
+# Usage: ./init-state-bucket [region]   (default us-east-2)
+set -euo pipefail
+
+REPO="$(cd "$(dirname "$0")" && pwd)"
+REGION="${1:-us-east-2}"
+
+command -v aws >/dev/null || { echo "Error: the AWS CLI v2 is required" >&2; exit 1; }
+
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+BUCKET="vpn-server-tfstate-$ACCOUNT"
+
+if aws s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1; then
+  echo "Bucket $BUCKET already exists; re-applying its settings."
+else
+  # us-east-1 is the one region that rejects an explicit LocationConstraint.
+  if [[ "$REGION" == "us-east-1" ]]; then
+    aws s3api create-bucket --bucket "$BUCKET" --region "$REGION" >/dev/null
+  else
+    aws s3api create-bucket --bucket "$BUCKET" --region "$REGION" \
+      --create-bucket-configuration "LocationConstraint=$REGION" >/dev/null
+  fi
+  echo "Created bucket $BUCKET in $REGION."
+fi
+
+# State holds every resource ID and output, so: never public, encrypted at rest,
+# TLS only, and versioned so a bad apply or a clobbered file can be rolled back.
+aws s3api put-public-access-block --bucket "$BUCKET" --public-access-block-configuration \
+  BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+aws s3api put-bucket-versioning --bucket "$BUCKET" \
+  --versioning-configuration Status=Enabled
+aws s3api put-bucket-encryption --bucket "$BUCKET" --server-side-encryption-configuration \
+  '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+aws s3api put-bucket-policy --bucket "$BUCKET" --policy "$(cat <<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "DenyInsecureTransport",
+    "Effect": "Deny",
+    "Principal": "*",
+    "Action": "s3:*",
+    "Resource": ["arn:aws:s3:::$BUCKET", "arn:aws:s3:::$BUCKET/*"],
+    "Condition": {"Bool": {"aws:SecureTransport": "false"}}
+  }]
+}
+POLICY
+)"
+
+if [[ -f "$REPO/backend.hcl" ]]; then
+  echo "backend.hcl already exists; left unchanged."
+else
+  cat > "$REPO/backend.hcl" <<HCL
+bucket = "$BUCKET"
+region = "$REGION"
+HCL
+  echo "Wrote backend.hcl."
+fi
+
+cat <<NEXT
+
+Next:
+  First machine (the one holding terraform.tfstate):
+    terraform init -migrate-state -backend-config=backend.hcl
+    terraform plan        # must say "No changes."
+  Any other machine:
+    terraform init -backend-config=backend.hcl
+NEXT
