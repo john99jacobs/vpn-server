@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# One-time setup, before the first apply: creates the WireGuard server keypair
+# in SSM Parameter Store, where the server fetches it at boot.
+#
+# Both parameters come from a single `wg genkey`, so they cannot disagree, and
+# the private key goes straight into a SecureString without touching disk. This
+# lives outside Terraform on purpose: a key Terraform generated would sit in
+# state. Refuses to overwrite, because replacing the server key invalidates
+# every client config already issued.
+#
+# Usage: ./init-wg-server-key [region]   (default: aws_region from
+#        terraform.tfvars, else us-east-2)
+set -euo pipefail
+
+REPO="$(cd "$(dirname "$0")" && pwd)"
+SERVER_KEY_PARAM="/vpn/wg/server-private-key"
+SERVER_PUB_PARAM="/vpn/wg/server-public-key"
+
+command -v wg >/dev/null || { echo "Error: wg is required (brew install wireguard-tools)" >&2; exit 1; }
+command -v aws >/dev/null || { echo "Error: the AWS CLI v2 is required" >&2; exit 1; }
+
+REGION="${1:-}"
+if [[ -z "$REGION" && -f "$REPO/terraform.tfvars" ]]; then
+  REGION=$(sed -n 's/^aws_region *= *"\([^"]*\)".*/\1/p' "$REPO/terraform.tfvars")
+fi
+REGION="${REGION:-us-east-2}"
+
+for param in "$SERVER_KEY_PARAM" "$SERVER_PUB_PARAM"; do
+  if aws ssm get-parameter --region "$REGION" --name "$param" >/dev/null 2>&1; then
+    echo "Error: $param already exists in $REGION. Replacing the server key breaks" >&2
+    echo "every client; delete both parameters by hand if that is really intended." >&2
+    exit 1
+  fi
+done
+
+priv=$(wg genkey)
+pub=$(printf '%s' "$priv" | wg pubkey)
+aws ssm put-parameter --region "$REGION" --name "$SERVER_KEY_PARAM" \
+  --type SecureString --value "$priv" >/dev/null
+aws ssm put-parameter --region "$REGION" --name "$SERVER_PUB_PARAM" \
+  --type String --value "$pub" >/dev/null
+echo "Created the WireGuard server key in $REGION. Run 'terraform apply' next."

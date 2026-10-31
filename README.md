@@ -57,7 +57,7 @@ irreplaceable.
    first apply; needs `wireguard-tools`):
 
    ```bash
-   ./wg-client init-server-key
+   ./init-wg-server-key
    ```
 
    This writes `/vpn/wg/server-private-key` (SecureString) and
@@ -102,7 +102,6 @@ Generated configs are saved to `clients/` (gitignored).
 ## WireGuard (beta)
 
 ```bash
-./wg-client init-server-key # one-time: create the server keypair in SSM
 ./wg-client add <name>      # generate a keypair + config, register the peer
 ./wg-client add <name> --pubkey <KEY>   # register a key the DEVICE generated
 ./wg-client qr <name>       # QR code for the iOS/Android app

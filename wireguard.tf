@@ -36,7 +36,7 @@ locals {
   wg_peer_param = "/vpn/wg/peers"
 }
 
-# Written out of band by `./wg-client init-server-key` (run once, before the
+# Written out of band by `./init-wg-server-key` (run once, before the
 # first apply), so the private key never enters Terraform state. Terraform only
 # needs the public half, to build client configs. A ParameterNotFound error here
 # means that step was skipped.
