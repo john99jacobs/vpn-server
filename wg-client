@@ -14,6 +14,8 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")" && pwd)"
 CLIENTS_DIR="$REPO/clients-wg"
 PEER_PARAM="/vpn/wg/peers"
+SERVER_KEY_PARAM="/vpn/wg/server-private-key"
+SERVER_PUB_PARAM="/vpn/wg/server-public-key"
 CLIENT_DNS="1.1.1.1"
 
 need() { command -v "$1" >/dev/null || { echo "Error: $1 is required (brew install $2)" >&2; exit 1; }; }
@@ -21,6 +23,15 @@ need() { command -v "$1" >/dev/null || { echo "Error: $1 is required (brew insta
 tf_output() {
   terraform -chdir="$REPO" output -raw "$1" 2>/dev/null || {
     echo "Error: could not read '$1'. Has the WireGuard stack been applied?" >&2
+    exit 1
+  }
+}
+
+# Names become a comment line in the server's wg0.conf and a filename under
+# clients-wg/, so a newline or a path separator in one is an injection.
+check_name() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$ ]] || {
+    echo "Error: invalid name '$1' (letters, digits, '.', '_', '-'; max 32; must start alphanumeric)" >&2
     exit 1
   }
 }
@@ -228,13 +239,46 @@ cmd_refresh() {
     if grep -q "^Endpoint = $endpoint:$port$" "$conf"; then
       echo "  $(basename "$conf" .conf): already current"
     else
-      sed -i '' "s|^Endpoint = .*|Endpoint = $endpoint:$port|" "$conf"
+      # -i.bak is the one in-place form both GNU and BSD sed accept.
+      sed -i.bak "s|^Endpoint = .*|Endpoint = $endpoint:$port|" "$conf"
+      rm -f "$conf.bak"
       echo "  $(basename "$conf" .conf): updated to $endpoint:$port"
       n=$((n + 1))
     fi
   done
   shopt -u nullglob
   echo "$n config(s) rewritten. Re-import any that changed on their device."
+}
+
+# One-time setup, before the first apply. Both SSM parameters come from a single
+# `wg genkey`, so they cannot disagree; the private key goes straight into a
+# SecureString and is never written to disk. Refuses to overwrite: replacing the
+# server key invalidates every client config already issued.
+cmd_init_server_key() {
+  need wg wireguard-tools
+  local region="${1:-}"
+  if [[ -z "$region" && -f "$REPO/terraform.tfvars" ]]; then
+    region=$(sed -n 's/^aws_region *= *"\([^"]*\)".*/\1/p' "$REPO/terraform.tfvars")
+  fi
+  region="${region:-us-east-2}"
+
+  local param
+  for param in "$SERVER_KEY_PARAM" "$SERVER_PUB_PARAM"; do
+    if aws ssm get-parameter --region "$region" --name "$param" >/dev/null 2>&1; then
+      echo "Error: $param already exists in $region. Replacing the server key breaks" >&2
+      echo "every client; delete both parameters by hand if that is really intended." >&2
+      exit 1
+    fi
+  done
+
+  local priv pub
+  priv=$(wg genkey)
+  pub=$(printf '%s' "$priv" | wg pubkey)
+  aws ssm put-parameter --region "$region" --name "$SERVER_KEY_PARAM" \
+    --type SecureString --value "$priv" >/dev/null
+  aws ssm put-parameter --region "$region" --name "$SERVER_PUB_PARAM" \
+    --type String --value "$pub" >/dev/null
+  echo "Created the WireGuard server key in $region. Run 'terraform apply' next."
 }
 
 cmd_qr() {
@@ -249,6 +293,10 @@ cmd_qr() {
 usage() {
   cat <<USAGE
 Usage: wg-client <command> [args]
+
+  init-server-key [region]
+                  One-time, before the first apply: create the server
+                  keypair in SSM. Region defaults to terraform.tfvars.
 
   add <name>      Generate a keypair + config, register the peer
   add <name> --pubkey <KEY>
@@ -266,9 +314,10 @@ USAGE
 }
 
 case "${1:-}" in
-  add)     [[ -n "${2:-}" ]] || { usage; exit 1; }; cmd_add "${@:2}" ;;
-  remove)  [[ -n "${2:-}" ]] || { usage; exit 1; }; cmd_remove "$2" ;;
-  qr)      [[ -n "${2:-}" ]] || { usage; exit 1; }; cmd_qr "$2" ;;
+  add)     [[ -n "${2:-}" ]] || { usage; exit 1; }; check_name "$2"; cmd_add "${@:2}" ;;
+  remove)  [[ -n "${2:-}" ]] || { usage; exit 1; }; check_name "$2"; cmd_remove "$2" ;;
+  qr)      [[ -n "${2:-}" ]] || { usage; exit 1; }; check_name "$2"; cmd_qr "$2" ;;
+  init-server-key) cmd_init_server_key "${2:-}" ;;
   list)    cmd_list ;;
   status)  cmd_status ;;
   refresh) cmd_refresh ;;

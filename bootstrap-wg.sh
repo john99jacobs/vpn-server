@@ -39,6 +39,7 @@ set -euo pipefail
 
 REGION="${aws_region}"
 KEY_PARAM="${server_key_param}"
+PUB_PARAM="${server_pub_param}"
 PEER_PARAM="${peer_param}"
 WG_ADDRESS="${wg_address}"
 WG_PORT="${wg_port}"
@@ -48,8 +49,33 @@ WAN_IF=$(ip route show default | awk '{print $5; exit}')
 
 PRIV=$(aws ssm get-parameter --region "$REGION" --name "$KEY_PARAM" \
   --with-decryption --query Parameter.Value --output text)
+PUB=$(aws ssm get-parameter --region "$REGION" --name "$PUB_PARAM" \
+  --query Parameter.Value --output text)
 PEERS=$(aws ssm get-parameter --region "$REGION" --name "$PEER_PARAM" \
   --query Parameter.Value --output text)
+
+# Clients are built from the public parameter, so if the two halves were set
+# separately and disagree, every handshake fails with nothing logged. Refuse to
+# start rather than run a server no client can reach.
+if [ "$(printf '%s' "$PRIV" | wg pubkey)" != "$PUB" ]; then
+  echo "$KEY_PARAM does not match $PUB_PARAM; refusing to configure wg0" >&2
+  exit 1
+fi
+
+# The parameter is pasted into wg0.conf, and wg-quick runs PostUp/PreUp lines as
+# root, so anything but [Peer] sections is rejected outright. On rejection the
+# running config is left alone and the timer retries once the list is fixed.
+n=0
+while IFS= read -r line; do
+  n=$((n + 1))
+  case "$line" in
+    ''|'#'*|'[Peer]') continue ;;
+  esac
+  [[ "$line" =~ ^PublicKey\ =\ [A-Za-z0-9+/]{43}=$ ]] && continue
+  [[ "$line" =~ ^AllowedIPs\ =\ ([0-9]{1,3}\.){3}[0-9]{1,3}/32$ ]] && continue
+  echo "$PEER_PARAM line $n is not allowed in a peer list; refusing to apply it" >&2
+  exit 1
+done <<< "$PEERS"
 
 NAT_UP="iptables -t nat -A POSTROUTING -o $WAN_IF -j MASQUERADE; iptables -A FORWARD -i %i -o $WAN_IF -j ACCEPT; iptables -A FORWARD -i $WAN_IF -o %i -m state --state RELATED,ESTABLISHED -j ACCEPT"
 NAT_DOWN="iptables -t nat -D POSTROUTING -o $WAN_IF -j MASQUERADE; iptables -D FORWARD -i %i -o $WAN_IF -j ACCEPT; iptables -D FORWARD -i $WAN_IF -o %i -m state --state RELATED,ESTABLISHED -j ACCEPT"
@@ -105,10 +131,18 @@ OnUnitActiveSec=120
 WantedBy=timers.target
 INNER
 
-/usr/local/bin/wg-sync-peers
-systemctl daemon-reload
-systemctl enable --now wg-sync-peers.timer
-
+# Firewall first, so wg0's PostUp rules are added on top of ufw's chains rather
+# than ufw rebuilding FORWARD underneath them. The route rule is what actually
+# lets tunnel traffic out: ufw's default forward policy is DROP, and without it
+# clients complete the handshake but reach nothing.
+WAN_IF=$(ip route show default | awk '{print $5; exit}')
 ufw allow ${wg_port}/udp
 ufw allow 22/tcp
+ufw route allow in on wg0 out on "$WAN_IF"
 ufw --force enable
+
+# A bad key pair or peer list must not abort the bootstrap before the timer
+# exists, or fixing the parameter would need an instance rebuild.
+/usr/local/bin/wg-sync-peers || echo "initial peer sync failed; the timer will retry" >&2
+systemctl daemon-reload
+systemctl enable --now wg-sync-peers.timer

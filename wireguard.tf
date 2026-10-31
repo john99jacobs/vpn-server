@@ -36,8 +36,10 @@ locals {
   wg_peer_param = "/vpn/wg/peers"
 }
 
-# Written out of band by `wg genkey`, so the private key never enters Terraform
-# state. Terraform only needs the public half, to build client configs.
+# Written out of band by `./wg-client init-server-key` (run once, before the
+# first apply), so the private key never enters Terraform state. Terraform only
+# needs the public half, to build client configs. A ParameterNotFound error here
+# means that step was skipped.
 data "aws_ssm_parameter" "wg_server_public_key" {
   name = local.wg_pub_param
 }
@@ -140,6 +142,7 @@ data "aws_iam_policy_document" "wg_ssm_read" {
     actions = ["ssm:GetParameter"]
     resources = [
       "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.wg_key_param}",
+      "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.wg_pub_param}",
       "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.wg_peer_param}",
     ]
   }
@@ -190,6 +193,7 @@ resource "aws_instance" "wg_server" {
   user_data = templatefile("${path.module}/bootstrap-wg.sh", {
     aws_region       = var.aws_region
     server_key_param = local.wg_key_param
+    server_pub_param = local.wg_pub_param
     peer_param       = local.wg_peer_param
     wg_address       = var.wg_server_address
     wg_port          = var.wg_port
