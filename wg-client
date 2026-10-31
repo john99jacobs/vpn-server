@@ -25,6 +25,15 @@ tf_output() {
   }
 }
 
+# Names become a comment line in the server's wg0.conf and a filename under
+# clients-wg/, so a newline or a path separator in one is an injection.
+check_name() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$ ]] || {
+    echo "Error: invalid name '$1' (letters, digits, '.', '_', '-'; max 32; must start alphanumeric)" >&2
+    exit 1
+  }
+}
+
 REGION=""
 region() { [[ -n "$REGION" ]] || REGION=$(tf_output aws_region); printf '%s' "$REGION"; }
 
@@ -228,7 +237,9 @@ cmd_refresh() {
     if grep -q "^Endpoint = $endpoint:$port$" "$conf"; then
       echo "  $(basename "$conf" .conf): already current"
     else
-      sed -i '' "s|^Endpoint = .*|Endpoint = $endpoint:$port|" "$conf"
+      # -i.bak is the one in-place form both GNU and BSD sed accept.
+      sed -i.bak "s|^Endpoint = .*|Endpoint = $endpoint:$port|" "$conf"
+      rm -f "$conf.bak"
       echo "  $(basename "$conf" .conf): updated to $endpoint:$port"
       n=$((n + 1))
     fi
@@ -250,7 +261,7 @@ usage() {
   cat <<USAGE
 Usage: wg-client <command> [args]
 
-  add <name>      Generate a keypair + config, register the peer
+  add <name>     Generate a keypair + config, register the peer
   add <name> --pubkey <KEY>
                   Register a key the DEVICE generated; nothing secret is
                   written here. Prints the settings to enter on the device.
@@ -266,9 +277,9 @@ USAGE
 }
 
 case "${1:-}" in
-  add)     [[ -n "${2:-}" ]] || { usage; exit 1; }; cmd_add "${@:2}" ;;
-  remove)  [[ -n "${2:-}" ]] || { usage; exit 1; }; cmd_remove "$2" ;;
-  qr)      [[ -n "${2:-}" ]] || { usage; exit 1; }; cmd_qr "$2" ;;
+  add)     [[ -n "${2:-}" ]] || { usage; exit 1; }; check_name "$2"; cmd_add "${@:2}" ;;
+  remove)  [[ -n "${2:-}" ]] || { usage; exit 1; }; check_name "$2"; cmd_remove "$2" ;;
+  qr)      [[ -n "${2:-}" ]] || { usage; exit 1; }; check_name "$2"; cmd_qr "$2" ;;
   list)    cmd_list ;;
   status)  cmd_status ;;
   refresh) cmd_refresh ;;

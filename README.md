@@ -53,14 +53,27 @@ irreplaceable.
    allowed_ssh_cidr = "YOUR_IP/32"     # lock down SSH access
    ```
 
-2. **Deploy:**
+2. **Create the WireGuard server key** (once per account and region, before the
+   first apply; needs `wireguard-tools`):
+
+   ```bash
+   ./init-wg-server-key
+   ```
+
+   This writes `/vpn/wg/server-private-key` (SecureString) and
+   `/vpn/wg/server-public-key` to SSM from a single keypair. Skip it and
+   `terraform plan` fails with `ParameterNotFound`. If the two are ever set by
+   hand and don't match, the server refuses to start WireGuard rather than
+   silently failing every handshake.
+
+3. **Deploy:**
 
    ```bash
    terraform init
    terraform apply
    ```
 
-3. **Create a client config:**
+4. **Create a client config:**
 
    ```bash
    ./vpn-client create mydevice

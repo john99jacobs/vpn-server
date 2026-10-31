@@ -13,6 +13,7 @@ AWS-based OpenVPN server infrastructure defined in Terraform. Deploys a VPC with
 - `wireguard.tf` — WireGuard beta stack (EIP, SG, IAM instance profile, SSM peer list, instance)
 - `bootstrap-wg.sh` — WireGuard bootstrap; fetches its key from SSM, writes a peer-sync script and timer
 - `wg-client` — Bash CLI for WireGuard peers
+- `init-wg-server-key` — One-time: creates the WireGuard server keypair in SSM
 - `clients-wg/` — Generated `.conf` files (gitignored, contain private keys)
 - `variables.tf` — Input variables with defaults (region, AMI, CIDRs, instance type)
 - `terraform.tfvars` — Local overrides (gitignored, contains sensitive values)
@@ -34,6 +35,7 @@ terraform validate      # Validate configuration syntax
 ./vpn-client revoke <name>   # Revoke client cert and delete local config
 ./vpn-client list            # List issued client certificates
 
+./init-wg-server-key         # WireGuard: one-time server keypair in SSM (before first apply)
 ./wg-client add <name>       # WireGuard: keypair + config, register peer
 ./wg-client add <name> --pubkey <KEY>   # register a device-generated key
 ./wg-client remove <name>    # Deregister a peer
