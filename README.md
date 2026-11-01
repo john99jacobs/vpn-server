@@ -1,34 +1,31 @@
 # vpn-server
 
-Personal OpenVPN server on AWS, defined in Terraform. One command to deploy, one command to create client configs.
+Personal WireGuard server on AWS, defined in Terraform. One command to deploy, one command to add a device.
 
 ## Architecture
 
-Single VPC with one public subnet in `us-east-2`, currently running **two** servers in parallel while WireGuard is evaluated:
+Single VPC with one public subnet in `us-east-2`, running one WireGuard server:
 
-| | OpenVPN | WireGuard (beta) |
-|---|---|---|
-| Port | UDP/1194 | UDP/51820 |
-| Endpoint | auto-assigned public IP | Elastic IP (stable across rebuilds) |
-| Trust model | Easy-RSA CA on the instance | static keypairs, no CA |
-| Access list | certs signed by the CA | peer public keys in SSM |
-| Client tool | `./vpn-client` | `./wg-client` |
-| Rebuildable? | **no** — holds the CA | yes, freely |
+| | |
+|---|---|
+| Port | UDP/51820 |
+| Endpoint | Elastic IP (stable across rebuilds) |
+| Trust model | static keypairs, no CA |
+| Access list | peer public keys in SSM |
+| Client tool | `./wg-client` |
+| Rebuildable? | yes, freely |
 
-Estimated cost while both run: **~$24/mo** on-demand. Destroying the WireGuard
-side returns it to ~$13/mo.
+Estimated cost: **~$12-13/mo** on-demand (instance plus the public IPv4).
 
-### Why two
-
-The OpenVPN instance is stateful: `/root/openvpn-ca` holds the CA key, the
-Easy-RSA index and `ta.key`, none of which exist anywhere else. Replacing that
-instance invalidates every issued client certificate, so it can't be treated as
-disposable and its AMI is pinned deliberately.
+### Why it is disposable
 
 WireGuard has no CA at all. Its only secret is a 32-byte server key held in SSM
-Parameter Store and fetched at boot. That makes the server genuinely
-disposable — OS upgrades are just an `apply`, and nothing on the instance is
-irreplaceable.
+Parameter Store and fetched at boot, and the peer list is a separate SSM
+parameter. That makes the server genuinely disposable — OS upgrades are just an
+`apply`, and nothing on the instance is irreplaceable.
+
+This repo used to run an OpenVPN server alongside it; that was retired in
+November 2026, and the last version with it is tagged `openvpn-final`.
 
 ## Prerequisites
 
@@ -36,6 +33,7 @@ irreplaceable.
 - AWS credentials configured (`aws configure` or environment variables)
 - An SSH key pair (the server uses this for admin access)
 - `session-manager-plugin` for shell access: `brew install --cask session-manager-plugin`
+- `wireguard-tools` (for `wg genkey`/`wg pubkey`) and, for QR codes, `qrencode`
 
 ## Quick Start
 
@@ -45,16 +43,15 @@ irreplaceable.
    git clone <repo-url> && cd vpn-server
    ```
 
-   Create a `terraform.tfvars` file:
+   Optionally create a `terraform.tfvars` file (see `terraform.tfvars.example`);
+   every variable has a default:
 
    ```hcl
-   easyrsa_email    = "you@example.com"
    ssh_public_key_path = "~/.ssh/id_ed25519.pub"
-   allowed_ssh_cidr = "YOUR_IP/32"     # lock down SSH access
    ```
 
 2. **Create the WireGuard server key** (once per account and region, before the
-   first apply; needs `wireguard-tools`):
+   first apply):
 
    ```bash
    ./init-wg-server-key
@@ -74,33 +71,20 @@ irreplaceable.
    terraform apply
    ```
 
-4. **Create a client config:**
+4. **Add a device:**
 
    ```bash
-   ./vpn-client create mydevice
+   ./wg-client add mydevice
+   ./wg-client qr mydevice      # for the iOS/Android app
    ```
 
-   This generates `clients/mydevice.ovpn` with all certs embedded.
+   This generates `clients-wg/mydevice.conf` and registers the peer.
 
-4. **Connect:**
-
-   ```bash
-   sudo openvpn --config clients/mydevice.ovpn
-   ```
-
-   Verify with `curl ifconfig.me` — it should return your VPN server's IP.
+5. **Connect:** import the config (or scan the QR code) in the WireGuard app and
+   activate the tunnel. Verify with `curl ifconfig.me` — it should return the
+   Elastic IP (`terraform output -raw wg_server_public_ip`).
 
 ## Client Management
-
-```bash
-./vpn-client create <name>   # generate a client config (.ovpn)
-./vpn-client revoke <name>   # revoke a client cert and delete local config
-./vpn-client list            # list issued client certificates
-```
-
-Generated configs are saved to `clients/` (gitignored).
-
-## WireGuard (beta)
 
 ```bash
 ./wg-client add <name>      # generate a keypair + config, register the peer
@@ -130,11 +114,11 @@ effect within ~2min. Changes are attributed by CloudTrail and retained in
 parameter version history, which is a stronger audit trail than a git author
 field.
 
-**Known beta limitations:**
+**Known limitations:**
 
-- **UDP only.** No TCP/443 fallback, so networks permitting only TCP will block
-  it. This is the one thing OpenVPN does that WireGuard can't, and the main
-  question the beta exists to answer.
+- **UDP only.** There is no TCP fallback, so networks permitting only TCP will
+  block it. (The retired OpenVPN server was UDP-only too, so nothing was lost.)
+  It has been confirmed working from home, LTE, office and hotel networks.
 - **IPv4 only.** `AllowedIPs = 0.0.0.0/0` routes v4 through the tunnel; on a
   dual-stack network, IPv6 traffic still goes direct and bypasses the VPN.
 - Fresh Elastic IPs are occasionally blackholed upstream by ISPs. If a new
@@ -142,45 +126,48 @@ field.
   `terraform apply -replace=aws_eip.wg` gets a different address, then
   `./wg-client refresh`.
 - Rebuilding the server changes its SSH host key while the EIP stays, so
-  `ssh-keygen -R <ip>` is needed before reconnecting. Session Manager
+  `ssh-keygen -R <ip>` is needed before reconnecting by IP. Session Manager
   (`aws ssm start-session`) avoids this entirely.
 
 ## Configuration
 
-All variables have sensible defaults except `easyrsa_email`. Override in `terraform.tfvars`:
+All variables have sensible defaults. Override in `terraform.tfvars`:
 
 | Variable | Default | Description |
 |---|---|---|
 | `aws_region` | `us-east-2` | AWS region |
-| `vpn_server_ami` | `ami-0933f4f9e0a0fc3a5` | OpenVPN server AMI, pinned on purpose |
-| `vpn_server_instance_type` | `t3.micro` | EC2 instance type |
 | `ssh_public_key_path` | `~/.ssh/id_rsa.pub` | Path to SSH public key |
+| `key_pair_name` | `vpn-key` | Name of the EC2 key pair |
+| `vpc_cidr` | `10.0.0.0/16` | CIDR block for the VPC |
+| `public_subnet_cidr` | `10.0.1.0/24` | CIDR block for the public subnet |
 | `emergency_ssh_cidr` | `null` | Break-glass inbound SSH; normally no SSH ingress at all |
 | `allowed_vpn_cidr` | `0.0.0.0/0` | CIDR allowed for VPN access |
-| `easyrsa_email` | *(required)* | Email for the certificate authority |
+| `wg_port` | `51820` | UDP port for WireGuard |
+| `wg_server_address` | `10.8.0.1/24` | Server address inside the tunnel subnet |
+| `wg_instance_type` | `t3.micro` | EC2 instance type |
 
 ## Shell Access
 
-There is **no inbound SSH**. Both security groups expose only their VPN port.
+There is **no inbound SSH**. The security group exposes only the WireGuard port.
 Shell access goes over AWS Session Manager, which works from any network:
 
 ```bash
-aws ssm start-session --target "$(terraform output -raw vpn_server_instance_id)"
+aws ssm start-session --target "$(terraform output -raw wg_server_instance_id)"
 ```
 
-Or real SSH tunnelled over it, which is what `./vpn-client` and `./wg-client` use:
+Or real SSH tunnelled over it, which is what `./wg-client` uses:
 
 ```bash
 ssh -i ~/.ssh/id_ed25519 \
   -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p --region us-east-2" \
-  ubuntu@"$(terraform output -raw vpn_server_instance_id)"
+  ubuntu@"$(terraform output -raw wg_server_instance_id)"
 ```
 
 This is deliberately not a home-IP allowlist: a fixed CIDR is useless when
 travelling, and Session Manager authenticates with IAM instead of network
 location, with every session logged to CloudTrail. As a side effect `known_hosts`
-is keyed by instance ID, so rebuilding a server no longer collides with a stored
-host key.
+is keyed by instance ID, so rebuilding the server no longer collides with a
+stored host key.
 
 **Break glass.** If SSM itself is broken, uncomment `emergency_ssh_cidr` in
 `terraform.tfvars`, apply, fix, then comment it out and apply again.
@@ -208,7 +195,7 @@ terraform plan                                              # must say "No chang
 
 Once the plan is clean, local `terraform.tfstate*` files are no longer read. Keep
 them as a backup for a while, but never run Terraform against them again: an
-apply from stale state could try to replace the OpenVPN server.
+apply from stale state could recreate or destroy resources that already exist.
 
 **Another machine:** run `./init-state-bucket` with that machine's credentials
 (it reuses the bucket and writes `backend.hcl`), then
@@ -232,3 +219,13 @@ apply.
 ```bash
 terraform destroy
 ```
+
+This is not a pause button:
+
+- It **releases the Elastic IP**. A later apply gets a new address, so every
+  client config breaks until each device's `Endpoint` is updated
+  (`./wg-client refresh` rewrites any configs still in `clients-wg/`).
+- It **deletes the peer list** (`/vpn/wg/peers`), so every device has to be
+  registered again with `./wg-client add`.
+- The server keypair survives: it was created by `./init-wg-server-key`, not by
+  Terraform, so a redeploy keeps the same server public key.

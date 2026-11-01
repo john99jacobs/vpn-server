@@ -4,22 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AWS-based OpenVPN server infrastructure defined in Terraform. Deploys a VPC with a single OpenVPN server in `us-east-2`.
+AWS-based WireGuard server infrastructure defined in Terraform. Deploys a VPC with a single WireGuard server in `us-east-2`.
 
 ## Key Files
 
-- `main.tf` — OpenVPN infrastructure: VPC, subnet, security group, EC2 instance
-- `bootstrap.sh` — OpenVPN bootstrap, rendered by `templatefile()` from `main.tf`
-- `wireguard.tf` — WireGuard beta stack (EIP, SG, IAM instance profile, SSM peer list, instance)
-- `bootstrap-wg.sh` — WireGuard bootstrap; fetches its key from SSM, writes a peer-sync script and timer
+- `main.tf` — All infrastructure: VPC, subnet, key pair, SSM peer list, EIP, security group, IAM instance profile, EC2 instance, outputs
+- `bootstrap-wg.sh` — WireGuard bootstrap, rendered by `templatefile()` from `main.tf`; fetches its key from SSM, writes a peer-sync script and timer
 - `wg-client` — Bash CLI for WireGuard peers
 - `init-wg-server-key` — One-time: creates the WireGuard server keypair in SSM
 - `clients-wg/` — Generated `.conf` files (gitignored, contain private keys)
-- `variables.tf` — Input variables with defaults (region, AMI, CIDRs, instance type)
-- `terraform.tfvars` — Local overrides (gitignored, contains sensitive values)
-- `vpn-client` — Bash CLI to create, revoke, and list VPN client configs
-- `client-template.ovpn` — Reference OpenVPN client config format
-- `clients/` — Generated `.ovpn` files (gitignored, contains private keys)
+- `clients/` — Legacy OpenVPN configs; kept gitignored so leftovers are never committed
+- `variables.tf` — Input variables with defaults (region, CIDRs, WireGuard port/address, instance type)
+- `terraform.tfvars` — Local overrides (gitignored)
 - `init-state-bucket` — One-time: creates the S3 state bucket and writes `backend.hcl`
 - `backend.hcl` — Backend bucket/region (gitignored; see `backend.hcl.example`)
 
@@ -33,12 +29,8 @@ terraform destroy       # Tear down all resources
 terraform fmt           # Format .tf files
 terraform validate      # Validate configuration syntax
 
-./vpn-client create <name>   # Generate client config (clients/<name>.ovpn)
-./vpn-client revoke <name>   # Revoke client cert and delete local config
-./vpn-client list            # List issued client certificates
-
-./init-wg-server-key         # WireGuard: one-time server keypair in SSM (before first apply)
-./wg-client add <name>       # WireGuard: keypair + config, register peer
+./init-wg-server-key         # One-time server keypair in SSM (before first apply)
+./wg-client add <name>       # Keypair + config, register peer
 ./wg-client add <name> --pubkey <KEY>   # register a device-generated key
 ./wg-client remove <name>    # Deregister a peer
 ./wg-client list             # Registered peers
@@ -52,15 +44,8 @@ terraform validate      # Validate configuration syntax
 
 ## Architecture (current state)
 
-Single VPC (`10.0.0.0/16`), one public subnet, **two** EC2 instances running in
-parallel while WireGuard is evaluated:
+Single VPC (`10.0.0.0/16`), one public subnet, one EC2 instance:
 
-- **`vpn_server`** — OpenVPN on UDP/1194. **Stateful and not replaceable:**
-  `/root/openvpn-ca` holds the CA key, Easy-RSA index and `ta.key`, which exist
-  nowhere else. Replacing it invalidates all issued client certs, so its AMI is
-  pinned via `var.vpn_server_ami` rather than tracking `data.aws_ami.ubuntu`.
-  **Never let a plan replace this instance without backing up `/root/openvpn-ca`
-  first.**
 - **`wg_server`** — WireGuard on UDP/51820, behind an Elastic IP. Stateless: the
   only secret is a 32-byte key in SSM, fetched at boot. Tracks the AMI data
   source and sets `user_data_replace_on_change`, so it is meant to be replaced
@@ -72,35 +57,35 @@ parallel while WireGuard is evaluated:
   and applies changes with `wg syncconf`, so adding a peer needs no instance
   change, no apply, and disconnects nobody.
 
-**There is no inbound SSH.** Both security groups expose only their VPN port.
-Both instances have an instance profile granting Session Manager, and
-`./vpn-client` / `./wg-client` reach them with SSH tunnelled over SSM
-(`AWS-StartSSHSession`), targeting the instance ID rather than an IP. Requires
-`session-manager-plugin` locally. `var.emergency_ssh_cidr` (default `null`) adds
-a temporary SSH rule to both SGs if SSM is ever broken.
+**There is no inbound SSH.** The security group exposes only the WireGuard port.
+The instance has an instance profile granting Session Manager, and
+`./wg-client` reaches it with SSH tunnelled over SSM (`AWS-StartSSHSession`),
+targeting the instance ID rather than an IP. Requires `session-manager-plugin`
+locally. `var.emergency_ssh_cidr` (default `null`) adds a temporary SSH rule if
+SSM is ever broken.
+
+OpenVPN was retired in November 2026 (last version: tag `openvpn-final`).
 
 ### Working on this repo
 
 - `terraform apply -auto-approve` is a bad idea here. Save a plan, confirm it
-  does not destroy `aws_instance.vpn_server`, then apply the saved plan.
-- Editing `bootstrap.sh` changes `user_data` and would replace the OpenVPN
-  instance. Editing `bootstrap-wg.sh` replaces the WireGuard instance, which is
-  fine and expected.
-- Both bootstrap scripts are `templatefile()` templates: a braced shell
-  expansion must be escaped with a doubled dollar sign.
+  never destroys or replaces `aws_eip.wg` (the endpoint in every client config)
+  or `aws_ssm_parameter.wg_peers` (the peer list), then apply the saved plan.
+  Replacing `aws_instance.wg_server` is fine: the EIP is reassociated, at the
+  cost of a ~2-3 min outage.
+- Editing `bootstrap-wg.sh` changes `user_data` and replaces the instance, which
+  is fine and expected.
+- `bootstrap-wg.sh` is a `templatefile()` template: a braced shell expansion
+  must be escaped with a doubled dollar sign.
 
 ## Branches
 
-- `main` — Current working branch (simplified single-server setup)
-- `public-vpn-server` — Previous iteration with jump box and NLB
-- `private-vpn-server` — VPN server in private subnet with NAT gateway
+- `main` — The deployed working branch. Work happens on feature branches and
+  lands through PRs.
 
 ## Known Issues / Planned Improvements
 
-- OpenVPN client certs expire **2028-10-14**; they will fail with a non-obvious error
-- WireGuard beta is UDP-only and IPv4-only (see README for the full list)
-- CA backup is manual and single-copy: `~/vpn-ca-backup/*.age` on the operator's
-  workstation, encrypted to their SSH key — so losing that machine loses both halves
+- WireGuard is UDP-only and IPv4-only (see README for the full list)
 
 ## Terraform Conventions
 
@@ -109,4 +94,4 @@ a temporary SSH rule to both SGs if SSM is ever broken.
   `backend.hcl` is gitignored and written by `./init-state-bucket`). Never run
   Terraform against a local `terraform.tfstate`.
 - Provider: `hashicorp/aws` only
-- Resources use descriptive names prefixed by function (e.g., `vpn_vpc`, `vpn_sg`)
+- Resources use descriptive names prefixed by function (e.g., `vpn_vpc`, `wg_sg`)
