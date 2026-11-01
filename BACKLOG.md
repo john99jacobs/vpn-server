@@ -51,7 +51,7 @@ hand. If HA is ever wanted it needs a different design (health-checked DNS).
 - [x] Keep the peer list out of git so the repo is safe to publish publicly
 
 ## Later
-- [ ] Add S3 backend for Terraform state
+- [x] Add S3 backend for Terraform state
 - [x] Encrypt the CA backup
 - [ ] Store a CA backup copy off-laptop (passphrase-encrypted)
 - [ ] IPv6 for the WireGuard tunnel (currently leaks v6 around the VPN)

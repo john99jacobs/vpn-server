@@ -69,7 +69,8 @@ irreplaceable.
 3. **Deploy:**
 
    ```bash
-   terraform init
+   ./init-state-bucket                         # once per account; see Remote State
+   terraform init -backend-config=backend.hcl
    terraform apply
    ```
 
@@ -183,6 +184,48 @@ host key.
 
 **Break glass.** If SSM itself is broken, uncomment `emergency_ssh_cidr` in
 `terraform.tfvars`, apply, fix, then comment it out and apply again.
+
+## Remote State
+
+Terraform state lives in S3 (`vpn-server-tfstate-<account-id>`, key
+`vpn-server/terraform.tfstate`), so any machine with credentials plans and
+applies against the same state. The bucket is private, encrypted, TLS-only and
+versioned. Locking uses S3's native lock file (`use_lockfile`), so two applies
+can't run at once and no DynamoDB table is needed.
+
+`./init-state-bucket [region]` creates the bucket and writes `backend.hcl`
+(gitignored, because the bucket name includes the account ID). It is safe to
+re-run.
+
+**Migrating existing local state** (one time, on the machine that has
+`terraform.tfstate`):
+
+```bash
+./init-state-bucket
+terraform init -migrate-state -backend-config=backend.hcl   # answer "yes" to copy
+terraform plan                                              # must say "No changes."
+```
+
+Once the plan is clean, local `terraform.tfstate*` files are no longer read. Keep
+them as a backup for a while, but never run Terraform against them again: an
+apply from stale state could try to replace the OpenVPN server.
+
+**Another machine:** run `./init-state-bucket` with that machine's credentials
+(it reuses the bucket and writes `backend.hcl`), then
+`terraform init -backend-config=backend.hcl`.
+
+**Permissions for the state bucket** (in addition to whatever the plan itself
+touches):
+
+| Action | Resource |
+|---|---|
+| `s3:ListBucket` | `arn:aws:s3:::vpn-server-tfstate-<account-id>` |
+| `s3:GetObject`, `s3:PutObject` | `…/vpn-server/terraform.tfstate` |
+| `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` | `…/vpn-server/terraform.tfstate.tflock` |
+
+Read-only access (`ListBucket` + `GetObject` on the state) is enough for
+`terraform plan -lock=false`, which suits a machine that should plan but not
+apply.
 
 ## Tear Down
 
