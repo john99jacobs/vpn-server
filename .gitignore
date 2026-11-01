@@ -7,6 +7,8 @@
 .terraform/
 .terraform.lock.hcl
 *.tfstate*
+# Backend config (bucket name contains the account ID)
+backend.hcl
 
 # Generated client configs (contain private keys)
 clients/

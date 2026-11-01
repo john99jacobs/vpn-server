@@ -9,7 +9,7 @@
 - [ ] Lock down SSH (`allowed_ssh_cidr`) or replace with SSM Session Manager
 
 ## Later
-- [ ] Add S3 backend for Terraform state
+- [x] Add S3 backend for Terraform state
 - [ ] Remove hardcoded email from bootstrap script (use a variable)
 - [ ] Add tags/naming convention for cost tracking
 - [ ] Add support for multiple AWS regions
