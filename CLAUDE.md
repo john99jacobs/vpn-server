@@ -22,7 +22,7 @@ AWS-based WireGuard server infrastructure defined in Terraform. Deploys a VPC wi
 ## Commands
 
 ```bash
-terraform init          # Initialize providers (already done, .terraform/ exists)
+terraform init -backend-config=backend.hcl   # Providers + S3 backend (.terraform/ may already exist)
 terraform plan          # Preview changes
 terraform apply         # Deploy infrastructure
 terraform destroy       # Tear down all resources
@@ -75,8 +75,8 @@ OpenVPN was retired in November 2026 (last version: tag `openvpn-final`).
   cost of a ~2-3 min outage.
 - Editing `bootstrap-wg.sh` changes `user_data` and replaces the instance, which
   is fine and expected.
-- `bootstrap-wg.sh` is a `templatefile()` template: a braced shell expansion
-  must be escaped with a doubled dollar sign.
+- `bootstrap-wg.sh` is a `templatefile()` template: any literal `${...}` or
+  `%{...}` the shell needs must be escaped as `$${...}` / `%%{...}`.
 
 ## Branches
 

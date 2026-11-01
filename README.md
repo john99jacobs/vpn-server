@@ -15,7 +15,7 @@ Single VPC with one public subnet in `us-east-2`, running one WireGuard server:
 | Client tool | `./wg-client` |
 | Rebuildable? | yes, freely |
 
-Estimated cost: **~$12-13/mo** on-demand (instance plus the public IPv4).
+Estimated cost: **~$12/mo** on-demand (t3.micro, public IPv4, 8 GB gp3 root volume).
 
 ### Why it is disposable
 
@@ -159,7 +159,7 @@ Or real SSH tunnelled over it, which is what `./wg-client` uses:
 
 ```bash
 ssh -i ~/.ssh/id_ed25519 \
-  -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p --region us-east-2" \
+  -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p --region $(terraform output -raw aws_region)" \
   ubuntu@"$(terraform output -raw wg_server_instance_id)"
 ```
 

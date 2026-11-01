@@ -9,6 +9,7 @@
 - [x] Parallel WireGuard server, stateless, key and peer list in SSM
 - [x] Elastic IP so client configs survive rebuilds
 - [x] Prove instance replacement preserves endpoint and peers
+- [x] Keep the peer list out of git so the repo is safe to publish publicly
 - [x] Confirm UDP/51820 works from every network that matters
       (home, LTE, office, hotel)
 - [x] Decide: promote WireGuard and retire OpenVPN
@@ -42,10 +43,8 @@ hand. If HA is ever wanted it needs a different design (health-checked DNS).
       cleaner than either.)
 - [ ] Make `wg-client` region-aware (`--region`, plus `--all-regions` to register
       a distinct key in each).
-- [ ] Budget ~$11-12/mo per extra region (instance + IPv4). Expect the fresh-EIP
-      blackhole issue to recur per region.
-
-- [x] Keep the peer list out of git so the repo is safe to publish publicly
+- [ ] Budget ~$12/mo per extra region (t3.micro, public IPv4, 8 GB gp3 root
+      volume). Expect the fresh-EIP blackhole issue to recur per region.
 
 ## Later
 - [x] Add S3 backend for Terraform state
