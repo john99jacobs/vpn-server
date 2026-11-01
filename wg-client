@@ -18,6 +18,12 @@ CLIENT_DNS="1.1.1.1"
 
 need() { command -v "$1" >/dev/null || { echo "Error: $1 is required (brew install $2)" >&2; exit 1; }; }
 
+# Git Bash on Windows rewrites arguments that look like POSIX paths before
+# running a native program, turning $PEER_PARAM into "C:/Program Files/Git/vpn/
+# wg/peers". Disabled for aws only: terraform -chdir needs the rewrite. Both
+# variables are ignored everywhere else.
+aws() { MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' command aws "$@"; }
+
 tf_output() {
   terraform -chdir="$REPO" output -raw "$1" 2>/dev/null || {
     echo "Error: could not read '$1'. Has the WireGuard stack been applied?" >&2
@@ -34,8 +40,10 @@ check_name() {
   }
 }
 
+# Resolved once, before any command runs. Looked up lazily inside $(...), a
+# failed tf_output only exited that subshell and aws ran with an empty region.
 REGION=""
-region() { [[ -n "$REGION" ]] || REGION=$(tf_output aws_region); printf '%s' "$REGION"; }
+load_region() { REGION=$(tf_output aws_region) || exit 1; }
 
 # --- peer list <-> SSM -------------------------------------------------------
 # The parameter holds a wg-config fragment, which is what the server drops
@@ -43,7 +51,7 @@ region() { [[ -n "$REGION" ]] || REGION=$(tf_output aws_region); printf '%s' "$R
 # commands below can work with structured data.
 
 peers_get() {
-  aws ssm get-parameter --region "$(region)" --name "$PEER_PARAM" \
+  aws ssm get-parameter --region "$REGION" --name "$PEER_PARAM" \
     --query Parameter.Value --output text | python3 -c '
 import json, sys
 peers, name, pk = [], None, None
@@ -74,7 +82,10 @@ else:
         "# {name}\n[Peer]\nPublicKey = {public_key}\nAllowedIPs = {ip}/32".format(**p)
         for p in sorted(peers, key=lambda p: tuple(int(o) for o in p["ip"].split(".")))
     ))')
-  aws ssm put-parameter --region "$(region)" --name "$PEER_PARAM" \
+  # Python on Windows prints CRLF. The server rejects any line it doesn't
+  # recognise, and "[Peer]\r" is one, so a CR anywhere blocks the whole list.
+  rendered=${rendered//$'\r'/}
+  aws ssm put-parameter --region "$REGION" --name "$PEER_PARAM" \
     --type String --value "$rendered" --overwrite >/dev/null
 }
 
@@ -186,22 +197,28 @@ CONF
   echo "This file holds the private key -- delete it once the device has imported it."
 }
 
+# Each step is captured before the next runs, so a failed read stops here
+# instead of feeding an empty list onwards.
 cmd_remove() {
-  local name="$1"
-  peers_get | python3 -c '
+  local name="$1" peers kept
+  peers=$(peers_get)
+  kept=$(printf '%s' "$peers" | python3 -c '
 import json, sys
 peers = json.load(sys.stdin)
 kept = [p for p in peers if p["name"] != sys.argv[1]]
 if len(kept) == len(peers):
     sys.exit(f"Error: no peer named {sys.argv[1]!r}")
-print(json.dumps(kept))' "$name" | peers_put
+print(json.dumps(kept))' "$name")
+  printf '%s' "$kept" | peers_put
   rm -f "$CLIENTS_DIR/$name.conf"
   echo "Removed '$name' and deleted its local config."
   echo "Access is revoked on the server within ~2min."
 }
 
 cmd_list() {
-  peers_get | python3 -c '
+  local peers
+  peers=$(peers_get)
+  printf '%s' "$peers" | python3 -c '
 import json, sys
 peers = json.load(sys.stdin)
 if not peers:
@@ -220,7 +237,7 @@ cmd_status() {
   local id
   id=$(tf_output wg_server_instance_id)
   ssh -i ~/.ssh/id_ed25519 \
-    -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p --region $(region)" \
+    -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p --region $REGION" \
     -o StrictHostKeyChecking=accept-new \
     "ubuntu@$id" 'sudo wg show'
 }
@@ -277,11 +294,11 @@ USAGE
 }
 
 case "${1:-}" in
-  add)     [[ -n "${2:-}" ]] || { usage; exit 1; }; check_name "$2"; cmd_add "${@:2}" ;;
-  remove)  [[ -n "${2:-}" ]] || { usage; exit 1; }; check_name "$2"; cmd_remove "$2" ;;
+  add)     [[ -n "${2:-}" ]] || { usage; exit 1; }; check_name "$2"; load_region; cmd_add "${@:2}" ;;
+  remove)  [[ -n "${2:-}" ]] || { usage; exit 1; }; check_name "$2"; load_region; cmd_remove "$2" ;;
   qr)      [[ -n "${2:-}" ]] || { usage; exit 1; }; check_name "$2"; cmd_qr "$2" ;;
-  list)    cmd_list ;;
-  status)  cmd_status ;;
+  list)    load_region; cmd_list ;;
+  status)  load_region; cmd_status ;;
   refresh) cmd_refresh ;;
   *)       usage; exit 1 ;;
 esac
