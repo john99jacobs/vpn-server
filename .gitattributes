@@ -1,6 +1,5 @@
 # Force LF on checkout everywhere, whatever core.autocrlf says. The bootstrap
-# scripts are rendered byte-for-byte into user_data, so a CRLF checkout (Git for
-# Windows defaults to core.autocrlf=true) plans a change to both servers: a
-# rebuilt WireGuard server and a stop/start, with a new public IP, for OpenVPN.
-# The CLI scripts also fail under bash with CRLF line endings.
+# script is rendered byte-for-byte into user_data, so a CRLF checkout (Git for
+# Windows defaults to core.autocrlf=true) plans a rebuild of the WireGuard
+# server. The CLI scripts also fail under bash with CRLF line endings.
 * text=auto eol=lf

@@ -30,8 +30,8 @@ variable "public_subnet_cidr" {
 }
 
 # Deliberately null: there is no inbound SSH by default. Shell access is via
-# Session Manager (see ./vpn-client and ./wg-client). Set this to a specific CIDR
-# only as a break-glass measure, and unset it again afterwards.
+# Session Manager (see ./wg-client). Set this to a specific CIDR only as a
+# break-glass measure, and unset it again afterwards.
 variable "emergency_ssh_cidr" {
   description = "CIDR allowed inbound SSH. null means no SSH ingress at all."
   type        = string
@@ -44,19 +44,20 @@ variable "allowed_vpn_cidr" {
   default     = "0.0.0.0/0"
 }
 
-variable "easyrsa_email" {
-  description = "Email for Easy-RSA certificate authority"
-  type        = string
+variable "wg_port" {
+  description = "UDP port for WireGuard"
+  type        = number
+  default     = 51820
 }
 
-variable "vpn_server_ami" {
-  description = "AMI for the OpenVPN server. Pinned on purpose -- see the comment on aws_instance.vpn_server."
+variable "wg_server_address" {
+  description = "Server address inside the VPN subnet, with prefix"
   type        = string
-  default     = "ami-0933f4f9e0a0fc3a5" # Ubuntu 24.04 noble, us-east-2, in use since 2026-07-12
+  default     = "10.8.0.1/24"
 }
 
-variable "vpn_server_instance_type" {
-  description = "EC2 instance type for the VPN server"
+variable "wg_instance_type" {
+  description = "EC2 instance type for the WireGuard server"
   type        = string
   default     = "t3.micro"
 }
