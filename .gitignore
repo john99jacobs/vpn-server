@@ -7,6 +7,8 @@
 .terraform/
 .terraform.lock.hcl
 *.tfstate*
+# Saved plans (contain a plaintext snapshot of state values)
+*.tfplan
 # Backend config (bucket name contains the account ID)
 backend.hcl
 
