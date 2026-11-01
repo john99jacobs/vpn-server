@@ -91,7 +91,10 @@ resource "aws_security_group" "wg_sg" {
     cidr_blocks = [var.allowed_vpn_cidr]
   }
 
-  # See the note on aws_security_group.vpn_sg: closed by default, SSM instead.
+  # Normally absent. Shell access is via Session Manager, which needs no inbound
+  # port and does not care what network you are on -- the point being that a
+  # fixed home CIDR is useless when travelling. Set emergency_ssh_cidr only to
+  # break glass if SSM itself is broken.
   dynamic "ingress" {
     for_each = var.emergency_ssh_cidr == null ? [] : [var.emergency_ssh_cidr]
     content {

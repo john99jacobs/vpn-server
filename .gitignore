@@ -12,7 +12,8 @@
 # Backend config (bucket name contains the account ID)
 backend.hcl
 
-# Generated client configs (contain private keys)
+# Legacy OpenVPN client configs (private keys). Kept ignored so leftovers can
+# never be committed.
 clients/
 # WireGuard client configs (contain private keys)
 clients-wg/
