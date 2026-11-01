@@ -43,3 +43,21 @@ variable "allowed_vpn_cidr" {
   type        = string
   default     = "0.0.0.0/0"
 }
+
+variable "wg_port" {
+  description = "UDP port for WireGuard"
+  type        = number
+  default     = 51820
+}
+
+variable "wg_server_address" {
+  description = "Server address inside the VPN subnet, with prefix"
+  type        = string
+  default     = "10.8.0.1/24"
+}
+
+variable "wg_instance_type" {
+  description = "EC2 instance type for the WireGuard server"
+  type        = string
+  default     = "t3.micro"
+}
