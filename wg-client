@@ -1,0 +1,287 @@
+#!/usr/bin/env bash
+# WireGuard client management.
+#
+# The peer list lives in SSM Parameter Store, not in this repo: peer public keys
+# are not secret, but they are a list of someone's devices, and this repo is
+# public. Changes are attributed by CloudTrail and kept in parameter version
+# history, which is a better audit trail than a git author field.
+#
+# This never touches the server. Keys are generated here, the private key never
+# leaves this machine, and the server polls the parameter every 2 minutes and
+# applies changes with `wg syncconf`, which does not disturb connected peers.
+set -euo pipefail
+
+REPO="$(cd "$(dirname "$0")" && pwd)"
+CLIENTS_DIR="$REPO/clients-wg"
+PEER_PARAM="/vpn/wg/peers"
+CLIENT_DNS="1.1.1.1"
+
+need() { command -v "$1" >/dev/null || { echo "Error: $1 is required (brew install $2)" >&2; exit 1; }; }
+
+tf_output() {
+  terraform -chdir="$REPO" output -raw "$1" 2>/dev/null || {
+    echo "Error: could not read '$1'. Has the WireGuard stack been applied?" >&2
+    exit 1
+  }
+}
+
+# Names become a comment line in the server's wg0.conf and a filename under
+# clients-wg/, so a newline or a path separator in one is an injection.
+check_name() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$ ]] || {
+    echo "Error: invalid name '$1' (letters, digits, '.', '_', '-'; max 32; must start alphanumeric)" >&2
+    exit 1
+  }
+}
+
+REGION=""
+region() { [[ -n "$REGION" ]] || REGION=$(tf_output aws_region); printf '%s' "$REGION"; }
+
+# --- peer list <-> SSM -------------------------------------------------------
+# The parameter holds a wg-config fragment, which is what the server drops
+# straight into wg0.conf. These two helpers convert it to and from JSON so the
+# commands below can work with structured data.
+
+peers_get() {
+  aws ssm get-parameter --region "$(region)" --name "$PEER_PARAM" \
+    --query Parameter.Value --output text | python3 -c '
+import json, sys
+peers, name, pk = [], None, None
+for line in sys.stdin.read().splitlines():
+    line = line.strip()
+    if line.startswith("#"):
+        c = line.lstrip("#").strip()
+        if c and c != "no peers yet":
+            name = c
+    elif line.startswith("PublicKey"):
+        pk = line.split("=", 1)[1].strip()
+    elif line.startswith("AllowedIPs") and pk:
+        ip = line.split("=", 1)[1].strip().split("/")[0]
+        peers.append({"name": name or pk[:8], "public_key": pk, "ip": ip})
+        name, pk = None, None
+print(json.dumps(peers))'
+}
+
+peers_put() {
+  local rendered
+  rendered=$(python3 -c '
+import json, sys
+peers = json.load(sys.stdin)
+if not peers:
+    print("# no peers yet")
+else:
+    print("\n\n".join(
+        "# {name}\n[Peer]\nPublicKey = {public_key}\nAllowedIPs = {ip}/32".format(**p)
+        for p in sorted(peers, key=lambda p: tuple(int(o) for o in p["ip"].split(".")))
+    ))')
+  aws ssm put-parameter --region "$(region)" --name "$PEER_PARAM" \
+    --type String --value "$rendered" --overwrite >/dev/null
+}
+
+# --- commands ---------------------------------------------------------------
+
+cmd_add() {
+  local name="$1"; shift
+  local pubkey=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pubkey)
+        pubkey="${2:-}"
+        [[ -n "$pubkey" ]] || { echo "Error: --pubkey needs a value" >&2; exit 1; }
+        shift 2
+        ;;
+      *) echo "Error: unknown option '$1'" >&2; exit 1 ;;
+    esac
+  done
+
+  local peers
+  peers=$(peers_get)
+  if printf '%s' "$peers" | python3 -c 'import json,sys; sys.exit(0 if any(p["name"]==sys.argv[1] for p in json.load(sys.stdin)) else 1)' "$name"; then
+    echo "Error: peer '$name' already exists. Use '$0 remove $name' first." >&2
+    exit 1
+  fi
+
+  local priv="" pub ip endpoint server_pub port
+  if [[ -n "$pubkey" ]]; then
+    # Device-generated key: the private key is created on the device and never
+    # exists here. Nothing is written to clients-wg/.
+    printf '%s' "$pubkey" | python3 -c '
+import base64, sys
+key = sys.stdin.read().strip()
+try:
+    raw = base64.b64decode(key, validate=True)
+except Exception:
+    sys.exit("not valid base64")
+if len(raw) != 32:
+    sys.exit(f"decodes to {len(raw)} bytes, expected 32")' \
+      || { echo "Error: --pubkey must be a WireGuard public key (44-char base64)" >&2; exit 1; }
+    if printf '%s' "$peers" | python3 -c 'import json,sys; sys.exit(0 if any(p["public_key"]==sys.argv[1] for p in json.load(sys.stdin)) else 1)' "$pubkey"; then
+      echo "Error: that public key is already registered." >&2
+      exit 1
+    fi
+    pub="$pubkey"
+  else
+    need wg wireguard-tools
+    priv=$(wg genkey)
+    pub=$(printf '%s' "$priv" | wg pubkey)
+  fi
+
+  # Lowest unused address in the /24; .1 is the server.
+  ip=$(printf '%s' "$peers" | python3 -c '
+import json, sys
+used = {p["ip"] for p in json.load(sys.stdin)}
+for host in range(2, 255):
+    cand = f"10.8.0.{host}"
+    if cand not in used:
+        print(cand); break
+else:
+    sys.exit("No free addresses in 10.8.0.0/24")')
+  endpoint=$(tf_output wg_server_public_ip)
+  server_pub=$(tf_output wg_server_public_key)
+  port=$(tf_output wg_port)
+
+  printf '%s' "$peers" | python3 -c '
+import json, sys
+peers = json.load(sys.stdin)
+peers.append({"name": sys.argv[1], "public_key": sys.argv[2], "ip": sys.argv[3]})
+print(json.dumps(peers))' "$name" "$pub" "$ip" | peers_put
+
+  if [[ -n "$pubkey" ]]; then
+    cat <<SETTINGS
+Registered '$name' at $ip. No private key was generated here.
+
+Enter these on the device (it already holds its own private key):
+
+  Address             $ip/32
+  DNS                 $CLIENT_DNS
+  Peer public key     $server_pub
+  Endpoint            $endpoint:$port
+  Allowed IPs         0.0.0.0/0
+  Persistent keepalive 25
+
+The server picks it up within ~2min.
+SETTINGS
+    return
+  fi
+
+  mkdir -p "$CLIENTS_DIR" && chmod 700 "$CLIENTS_DIR"
+  local conf="$CLIENTS_DIR/$name.conf"
+  umask 077
+  cat > "$conf" <<CONF
+# $name -- generated $(date -u +%Y-%m-%dT%H:%M:%SZ)
+[Interface]
+PrivateKey = $priv
+Address = $ip/32
+DNS = $CLIENT_DNS
+
+[Peer]
+PublicKey = $server_pub
+Endpoint = $endpoint:$port
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+CONF
+
+  echo "Created $conf  (address $ip)"
+  echo "Registered '$name'. The server picks it up within ~2min."
+  echo "This file holds the private key -- delete it once the device has imported it."
+}
+
+cmd_remove() {
+  local name="$1"
+  peers_get | python3 -c '
+import json, sys
+peers = json.load(sys.stdin)
+kept = [p for p in peers if p["name"] != sys.argv[1]]
+if len(kept) == len(peers):
+    sys.exit(f"Error: no peer named {sys.argv[1]!r}")
+print(json.dumps(kept))' "$name" | peers_put
+  rm -f "$CLIENTS_DIR/$name.conf"
+  echo "Removed '$name' and deleted its local config."
+  echo "Access is revoked on the server within ~2min."
+}
+
+cmd_list() {
+  peers_get | python3 -c '
+import json, sys
+peers = json.load(sys.stdin)
+if not peers:
+    print("No peers.")
+    sys.exit()
+width = max(len(p["name"]) for p in peers)
+for p in peers:
+    name, ip, key = p["name"], p["ip"], p["public_key"]
+    print(f"{name:<{width}}  {ip:<12}  {key}")'
+}
+
+# Handshake times tell you which peers have actually connected. Runs over
+# Session Manager, so it needs no inbound SSH port and works from any network.
+# Needs session-manager-plugin locally (brew install --cask session-manager-plugin).
+cmd_status() {
+  local id
+  id=$(tf_output wg_server_instance_id)
+  ssh -i ~/.ssh/id_ed25519 \
+    -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p --region $(region)" \
+    -o StrictHostKeyChecking=accept-new \
+    "ubuntu@$id" 'sudo wg show'
+}
+
+# Rewrites the Endpoint line in existing client configs from the current
+# Terraform outputs. Needed whenever the EIP changes -- peer keys are unaffected,
+# so this touches neither the parameter nor the server.
+cmd_refresh() {
+  local endpoint port n=0
+  endpoint=$(tf_output wg_server_public_ip)
+  port=$(tf_output wg_port)
+  shopt -s nullglob
+  for conf in "$CLIENTS_DIR"/*.conf; do
+    if grep -q "^Endpoint = $endpoint:$port$" "$conf"; then
+      echo "  $(basename "$conf" .conf): already current"
+    else
+      # -i.bak is the one in-place form both GNU and BSD sed accept.
+      sed -i.bak "s|^Endpoint = .*|Endpoint = $endpoint:$port|" "$conf"
+      rm -f "$conf.bak"
+      echo "  $(basename "$conf" .conf): updated to $endpoint:$port"
+      n=$((n + 1))
+    fi
+  done
+  shopt -u nullglob
+  echo "$n config(s) rewritten. Re-import any that changed on their device."
+}
+
+cmd_qr() {
+  local name="$1"
+  need qrencode qrencode
+  local conf="$CLIENTS_DIR/$name.conf"
+  [[ -f "$conf" ]] || { echo "Error: $conf not found" >&2; exit 1; }
+  qrencode -t ansiutf8 < "$conf"
+  echo "Scan with the WireGuard app on iOS/Android."
+}
+
+usage() {
+  cat <<USAGE
+Usage: wg-client <command> [args]
+
+  add <name>     Generate a keypair + config, register the peer
+  add <name> --pubkey <KEY>
+                  Register a key the DEVICE generated; nothing secret is
+                  written here. Prints the settings to enter on the device.
+  remove <name>   Deregister a peer and delete its local config
+  list            List registered peers
+  status          Show live handshakes from the server
+  refresh         Rewrite Endpoint in configs after an EIP change
+  qr <name>       Print the config as a QR code for mobile import
+
+The peer list lives in SSM Parameter Store ($PEER_PARAM), not in this repo.
+add and remove take effect on the server within ~2min; no terraform apply needed.
+USAGE
+}
+
+case "${1:-}" in
+  add)     [[ -n "${2:-}" ]] || { usage; exit 1; }; check_name "$2"; cmd_add "${@:2}" ;;
+  remove)  [[ -n "${2:-}" ]] || { usage; exit 1; }; check_name "$2"; cmd_remove "$2" ;;
+  qr)      [[ -n "${2:-}" ]] || { usage; exit 1; }; check_name "$2"; cmd_qr "$2" ;;
+  list)    cmd_list ;;
+  status)  cmd_status ;;
+  refresh) cmd_refresh ;;
+  *)       usage; exit 1 ;;
+esac
